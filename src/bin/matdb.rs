@@ -29,14 +29,16 @@ fn main() {
 
     println!("Created transaction");
 
+    let mut count = 0;
     let now = Instant::now();
-    for i in 1..1000 {
-        for j in 1..1000 {
-            txn.add_row(&[i, j, i*j]);
+    for i in 0..1000 {
+        for j in 0..1000 {
+            txn.add_row(&[i, j, i*1000 + j]);
+            count += 1;
         }
     }
     let elapsed = now.elapsed();
-    println!("Inserted {} rows in {:?}", 1000*1000, elapsed);
+    println!("Inserted {} rows in {:?}", count, elapsed);
 
     let mut count = 0;
     let now = Instant::now();
