@@ -17,8 +17,9 @@ struct SliceInsertionParams {
 }
 
 pub struct BufferIter<'buf> {
-    buffer : &'buf Buffer,
-    next_index : usize
+    buffer: &'buf Buffer,
+    next_index: usize,
+    values_array: *mut Vec<Datum>
 }
 
 impl Buffer {
@@ -42,7 +43,6 @@ impl Buffer {
             let idx = self.get_index(&dim_idxs);
             self.values[idx] = Some(value);
         }
-
     }
 
     fn get_index(&self, dim_indexes: &[usize]) -> usize {
@@ -78,7 +78,7 @@ impl Buffer {
 
         for i in (0..params.moves).rev() {
             let from_offset = i * params.len + params.offset;
-            let to_offset = from_offset + (i+1) * params.step;
+            let to_offset = from_offset + (i + 1) * params.step;
             self.copy_elements(from_offset, to_offset, params.len);
             self.clear_elements(from_offset, to_offset);
         }
@@ -92,7 +92,7 @@ impl Buffer {
         unsafe {
             let src = self.values.as_mut_ptr().add(from_idx);
             let dest = src.add(to_idx - from_idx);
-            ptr::copy(src,dest, num);
+            ptr::copy(src, dest, num);
         }
     }
 
@@ -111,13 +111,13 @@ impl Buffer {
             num_moves *= sizes[i];
         }
 
-        for i in (dim_no+1)..sizes.len() {
+        for i in (dim_no + 1)..sizes.len() {
             move_step *= sizes[i];
         }
 
         let move_size = sizes[dim_no] * move_step;
         let new_size = num_moves * (sizes[dim_no] + 1) * move_step;
-        let current_size= num_moves * move_size;
+        let current_size = num_moves * move_size;
 
         let move_offset = move_step * index;
 
@@ -132,29 +132,34 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn iter(&self) -> BufferIter {
-        BufferIter { buffer: self, next_index: 0 }
+    pub(crate) fn iter<'buf>(&'buf self, values_array: &'buf mut Vec<Datum>) -> BufferIter {
+        BufferIter {
+            buffer: self,
+            next_index: 0,
+            values_array
+        }
     }
 
-    pub(crate) fn build_query_row(&self, index: usize, value: Datum) -> QueryRow {
+    pub(crate) fn build_query_row(&self, index: usize, value: Datum, result: *mut Vec<Datum>) {
+        let result = unsafe { result.as_mut().unwrap() };
         let mut index = index;
-        let mut values = Vec::new();
+        result.clear();
         let mut dim_slice_size : usize = self.dimension_values.iter().map(|x| x.len()).product();
         for dim in &self.dimension_values {
             dim_slice_size /= dim.len();
             let dim_idx = index / dim_slice_size;
             index -= dim_idx * dim_slice_size;
-            values.push(dim[dim_idx]);
+            result.push(dim[dim_idx]);
         }
-        values.push(value);
-        QueryRow { values }
+        result.push(value);
     }
 }
 
 impl<'buf> Iterator for BufferIter<'buf> {
     type Item = QueryRow;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<QueryRow>
+    {
         loop {
             if self.next_index >= self.buffer.values.len() {
                 return None;
@@ -164,7 +169,9 @@ impl<'buf> Iterator for BufferIter<'buf> {
             let value = self.buffer.values[index];
             self.next_index += 1;
             if value.is_none() { continue; }
-            return Some(self.buffer.build_query_row(index, value.unwrap()));
+
+            self.buffer.build_query_row(index, value.unwrap(), self.values_array);
+            return Some(QueryRow::new(self.values_array));
         }
     }
 }
@@ -274,8 +281,9 @@ mod get_slice_insertion_params_tests {
     }
 }
 
+#[cfg(test)]
 mod slice_insert_tests {
-    use crate::buffer::Buffer;
+    use super::Buffer;
 
     #[test]
     fn one_dimension() {

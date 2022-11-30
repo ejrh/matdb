@@ -1,8 +1,8 @@
 use std::collections::{hash_map, HashMap};
 use std::hash::{Hash, Hasher};
 use std::iter::zip;
+use std::ops::Index;
 use std::path::{Path, PathBuf};
-use std::{hash, slice};
 
 use serde::{Serialize, Deserialize};
 use serde_json;
@@ -49,13 +49,14 @@ pub struct Transaction<'db> {
 
 #[derive(Debug)]
 pub struct QueryRow {
-    values: Vec<Datum>
+    values_array: *const Vec<Datum>
 }
 
 pub struct QueryIterator<'txn> {
     buffer_iter: hash_map::Iter<'txn, ChunkKey, Buffer>,
     buffer_key: Option<&'txn ChunkKey>,
-    value_iter: Option<BufferIter<'txn>>
+    value_iter: Option<BufferIter<'txn>>,
+    values_array: *mut Vec<Datum>
 }
 
 mod buffer;
@@ -100,11 +101,12 @@ impl<'db> Transaction<'db> {
         // Consume the Transaction, if nothing else
     }
 
-    pub fn query(&'db self) -> QueryIterator<'db> {
+    pub fn query(&'db self, values_array: &mut Vec<Datum>) -> QueryIterator<'db> {
         QueryIterator {
             buffer_iter: self.buffers.iter(),
             buffer_key: None,
             value_iter: None,
+            values_array
         }
     }
 }
@@ -150,7 +152,7 @@ impl<'txn> Iterator for QueryIterator<'txn> {
             if self.value_iter.is_none() {
                 let (buffer_key, buffer) = self.buffer_iter.next()?;
                 self.buffer_key = Some(buffer_key);
-                self.value_iter = Some(buffer.iter());
+                self.value_iter = Some(buffer.iter(unsafe { self.values_array.as_mut().unwrap() }));
             }
 
             let mut iter = self.value_iter.as_mut().unwrap();
@@ -166,5 +168,22 @@ impl<'txn> Iterator for QueryIterator<'txn> {
 
             self.value_iter = None;
         }
+    }
+}
+
+impl QueryRow {
+    fn new(values_array: *const Vec<Datum>) -> Self {
+        return QueryRow {
+            values_array
+        }
+    }
+
+}
+
+impl Index<usize> for QueryRow {
+    type Output = Datum;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        todo!()
     }
 }

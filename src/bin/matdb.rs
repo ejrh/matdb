@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Instant;
 use matdb;
-use matdb::{Dimension, Schema, Value};
+use matdb::{Datum, Dimension, QueryRow, Schema, Value};
 
 fn main() {
     println!("Hello");
@@ -42,7 +42,8 @@ fn main() {
 
     let mut count = 0;
     let now = Instant::now();
-    for row in txn.query() {
+    let mut values_array: Vec<Datum> = Vec::new();
+    for row in txn.query(&mut values_array) {
         //println!("Row: {:?}", row);
         count += 1;
     }
