@@ -1,6 +1,5 @@
-extern crate core;
-
 use std::collections::{hash_map, HashMap};
+use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::iter::zip;
 use std::ops::Index;
@@ -49,7 +48,6 @@ pub struct Transaction<'db> {
     buffers: HashMap<ChunkKey, Buffer>
 }
 
-#[derive(Debug)]
 pub struct QueryRow {
     values_array: *const Vec<Datum>
 }
@@ -157,7 +155,7 @@ impl<'txn> Iterator for QueryIterator<'txn> {
                 self.value_iter = Some(buffer.iter(unsafe { self.values_array.as_mut().unwrap() }));
             }
 
-            let mut iter = self.value_iter.as_mut().unwrap();
+            let iter = self.value_iter.as_mut().unwrap();
 
             loop {
                 match iter.next() {
@@ -179,7 +177,6 @@ impl QueryRow {
             values_array
         }
     }
-
 }
 
 impl Index<usize> for QueryRow {
@@ -189,4 +186,11 @@ impl Index<usize> for QueryRow {
         let vals = unsafe { self.values_array.as_ref() };
         &vals.unwrap()[index]
     }
+}
+
+impl Debug for QueryRow {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let va = unsafe { self.values_array.as_ref() }.unwrap();
+        f.debug_list().entries(va).finish()
+   }
 }

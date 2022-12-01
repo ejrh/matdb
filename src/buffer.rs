@@ -18,7 +18,8 @@ struct SliceInsertionParams {
 
 pub struct BufferIter<'buf> {
     buffer: &'buf Buffer,
-    next_index: usize,
+    indexes: Vec<usize>,
+    value_index: usize,
     values_array: *mut Vec<Datum>
 }
 
@@ -135,23 +136,27 @@ impl Buffer {
     pub(crate) fn iter<'buf>(&'buf self, values_array: &'buf mut Vec<Datum>) -> BufferIter {
         BufferIter {
             buffer: self,
-            next_index: 0,
+            indexes: vec![0; self.dimension_values.len()],
+            value_index: 0,
             values_array
         }
     }
+}
 
-    pub(crate) fn build_query_row(&self, index: usize, value: Datum, result: *mut Vec<Datum>) {
-        let result = unsafe { result.as_mut().unwrap() };
-        let mut index = index;
-        result.clear();
-        let mut dim_slice_size : usize = self.dimension_values.iter().map(|x| x.len()).product();
-        for dim in &self.dimension_values {
-            dim_slice_size /= dim.len();
-            let dim_idx = index / dim_slice_size;
-            index -= dim_idx * dim_slice_size;
-            result.push(dim[dim_idx]);
+impl<'buf> BufferIter<'buf> {
+    fn increment_indexes(&mut self) {
+        self.value_index += 1;
+        let mut incr_pos = self.indexes.len() - 1;
+        loop {
+            self.indexes[incr_pos] += 1;
+            if self.indexes[incr_pos] >= self.buffer.dimension_values[incr_pos].len() {
+                if incr_pos == 0 { break; }
+                self.indexes[incr_pos] = 0;
+                incr_pos -= 1;
+                continue;
+            }
+            break;
         }
-        result.push(value);
     }
 }
 
@@ -161,16 +166,32 @@ impl<'buf> Iterator for BufferIter<'buf> {
     fn next(&mut self) -> Option<QueryRow>
     {
         loop {
-            if self.next_index >= self.buffer.values.len() {
+            // Check if indexes are already past the size of the buffer
+            if self.indexes[0] >= self.buffer.dimension_values[0].len() {
                 return None;
             }
 
-            let index = self.next_index;
-            let value = self.buffer.values[index];
-            self.next_index += 1;
-            if value.is_none() { continue; }
+            // Turn this index into a single number and get the result
+            //let calculated_idx = self.buffer.get_index(&self.indexes);
+            //assert_eq!(self.value_index, calculated_idx);
+            let value: Option<Datum> = self.buffer.values[self.value_index];
 
-            self.buffer.build_query_row(index, value.unwrap(), self.values_array);
+            // If it's empty, increment and try the next one
+            if value.is_none() {
+                self.increment_indexes();
+                continue;
+            }
+
+            let value = value.unwrap();
+            let va = unsafe { self.values_array.as_mut() }.unwrap();
+            va.clear();
+            for i in 0..self.indexes.len() {
+                va.push(self.buffer.dimension_values[i][self.indexes[i]]);
+            }
+            va.push(value);
+
+            // Move to to the next index and return the row
+            self.increment_indexes();
             return Some(QueryRow::new(self.values_array));
         }
     }
