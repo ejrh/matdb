@@ -1,3 +1,5 @@
+extern crate core;
+
 use std::collections::{hash_map, HashMap};
 use std::hash::{Hash, Hasher};
 use std::iter::zip;
@@ -184,6 +186,7 @@ impl Index<usize> for QueryRow {
     type Output = Datum;
 
     fn index(&self, index: usize) -> &Self::Output {
-        todo!()
+        let vals = unsafe { self.values_array.as_ref() };
+        &vals.unwrap()[index]
     }
 }

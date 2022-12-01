@@ -354,3 +354,38 @@ mod slice_insert_tests {
         assert_eq!(b.values.len(), 1);
     }
 }
+
+#[cfg(test)]
+mod iterate_tests {
+    use crate::buffer::Buffer;
+    use crate::Datum;
+
+    #[test]
+    fn empty_buffer() {
+        let mut b = Buffer::new(1);
+
+        let mut values_array: Vec<Datum> = Vec::new();
+        let count = b.iter(&mut values_array).count();
+        assert_eq!(count, 0);
+
+        b.add_dimension_value(0, 42);
+        let count = b.iter(&mut values_array).count();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn one_dimension() {
+        let mut b = Buffer::new(1);
+
+        b.add_row(&[42, 99]);
+
+        let mut values_array: Vec<Datum> = Vec::new();
+        let items : Vec<_> = b.iter(&mut values_array).collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0][0], 42);
+
+        b.values[0] = None;
+        let count = b.iter(&mut values_array).count();
+        assert_eq!(count, 0);
+    }
+}
