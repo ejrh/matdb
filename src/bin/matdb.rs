@@ -37,8 +37,7 @@ fn main() {
             count += 1;
         }
     }
-    let elapsed = now.elapsed();
-    println!("Inserted {} rows in {:?}", count, elapsed);
+    println!("Inserted {} rows in {:?}", count, now.elapsed());
 
     let mut count = 0;
     let now = Instant::now();
@@ -47,10 +46,26 @@ fn main() {
         //println!("Row: {:?}", row);
         count += 1;
     }
-    let elapsed = now.elapsed();
-    println!("Queried {} rows in {:?}", count, elapsed);
+    println!("Queried {} rows in {:?}", count, now.elapsed());
 
+    let now = Instant::now();
+    txn.save();
+    println!("Saved in {:?}", now.elapsed());
     txn.commit();
+
+    let mut txn = matdb.new_transaction().unwrap();
+    let now = Instant::now();
+    txn.load();
+    println!("Loaded in {:?}", now.elapsed());
+
+    let mut count = 0;
+    let now = Instant::now();
+    let mut values_array: Vec<Datum> = Vec::new();
+    for row in txn.query(&mut values_array) {
+        //println!("Row: {:?}", row);
+        count += 1;
+    }
+    println!("Queried {} rows in {:?}", count, now.elapsed());
 
     println!("Goodbye");
 }

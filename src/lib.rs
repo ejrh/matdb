@@ -1,16 +1,19 @@
 use std::collections::{hash_map, HashMap};
 use std::fmt::{Debug, Formatter};
+use std::fs::File;
 use std::hash::{Hash, Hasher};
+use std::io::{BufReader, Read, Write};
 use std::iter::zip;
 use std::ops::Index;
 use std::path::{Path, PathBuf};
 
 use serde::{Serialize, Deserialize};
 use serde_json;
+use zstd::zstd_safe;
 
 #[derive(Debug)]
 pub enum Error {
-    IOError,
+    IoError,
     SchemaError,
     DataError
 }
@@ -63,6 +66,12 @@ mod buffer;
 
 use crate::buffer::{Buffer, BufferIter};
 
+impl From<std::io::Error> for Error {
+    fn from(_: std::io::Error) -> Self {
+        return Error::IoError;
+    }
+}
+
 impl Database {
     pub fn create(schema: Schema, path: &Path) -> Result<Database, Error> {
         let j = serde_json::to_string(&schema).unwrap();
@@ -108,6 +117,57 @@ impl<'db> Transaction<'db> {
             value_iter: None,
             values_array
         }
+    }
+
+    pub fn load(&mut self) -> Result<(), Error> {
+        let mut file = File::open("test")?;
+        let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
+
+        loop {
+            let mut read_buffer:[u8; 4] = [0; 4];
+
+            src.read(&mut read_buffer)?;
+
+            if read_buffer.eq("BLK:".as_bytes()) {
+                let mut buffer = Buffer::new(0);
+
+                let result = buffer.load(&mut src);
+
+                /* Pick the first row and use it as the chunk for for the whole block */
+                let mut values_array: Vec<Datum> = Vec::new();
+                let first = buffer.iter(&mut values_array).next();
+                if first.is_none() { continue; }
+                let key = self.database.schema.get_chunk_key(&values_array);
+
+                self.buffers.insert(key, buffer);
+
+                // WHY?  ZStd encoder seems to emit one byte that the decoder doesn't need to read
+                src.seek_relative(1);
+
+                //println!("Loaded buffer ending at {}", src.stream_position().unwrap());
+
+            } else if read_buffer.eq("END:".as_bytes()) {
+                break;
+            } else {
+                panic!("Unexpected data!");
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn save(&mut self) -> Result<(), Error> {
+        let mut file = File::create("test")?;
+
+        for buf in self.buffers.values() {
+            file.write("BLK:".as_bytes())?;
+            buf.save(&mut file)?;
+            //println!("Saved buffer ending at {}", file.stream_position().unwrap());
+        }
+
+        file.write("END:".as_bytes())?;
+
+        Ok(())
     }
 }
 
