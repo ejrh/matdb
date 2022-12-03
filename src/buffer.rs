@@ -154,15 +154,15 @@ impl Buffer {
         let mut num_values = 1;
 
         /* Read the dimensions */
-        decoder.read(&mut read_buffer)?;
+        decoder.read_exact(&mut read_buffer)?;
         let num_dimensions = usize::from_ne_bytes(read_buffer);
         self.dimension_values.clear();
         for _ in 0..num_dimensions {
             let mut dim_vals: Vec<Datum>= Vec::new();
-            decoder.read(&mut read_buffer)?;
+            decoder.read_exact(&mut read_buffer)?;
             let dim_size = usize::from_ne_bytes(read_buffer);
             for _ in 0..dim_size {
-                decoder.read(&mut read_buffer)?;
+                decoder.read_exact(&mut read_buffer)?;
                 let dim_idx = usize::from_ne_bytes(read_buffer);
                 dim_vals.push(dim_idx);
             }
@@ -174,7 +174,7 @@ impl Buffer {
         self.values.clear();
         self.values.reserve(num_values);
         for _ in 0..num_values {
-            decoder.read(&mut read_buffer)?;
+            decoder.read_exact(&mut read_buffer)?;
             let val = usize::from_ne_bytes(read_buffer);
             self.values.push(Some(val));
         }
@@ -188,21 +188,21 @@ impl Buffer {
         let mut encoder = zstd::stream::write::Encoder::new(file, 1)?;
 
         /* Write the dimensions */
-        encoder.write(&usize::to_ne_bytes(self.dimension_values.len()));
+        encoder.write_all(&usize::to_ne_bytes(self.dimension_values.len()))?;
         for dim in &self.dimension_values {
-            encoder.write(&usize::to_ne_bytes(dim.len()));
+            encoder.write_all(&usize::to_ne_bytes(dim.len()))?;
             for &dim_val in dim {
-                encoder.write(&usize::to_ne_bytes(dim_val));
+                encoder.write_all(&usize::to_ne_bytes(dim_val))?;
             }
         }
 
         /* Write the values */
         for &val in &self.values {
             let val = val.unwrap();
-            encoder.write(&usize::to_ne_bytes(val));
+            encoder.write_all(&usize::to_ne_bytes(val))?;
         }
 
-        encoder.finish();
+        encoder.finish()?;
 
         Ok(())
     }

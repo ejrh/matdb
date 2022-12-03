@@ -8,7 +8,7 @@ fn main() {
 
     let mut matdb = matdb::Database::create(matdb::Schema {
         dimensions: vec![
-            Dimension { name: String::from("time"), chunk_size: 100 },
+            Dimension { name: String::from("time"), chunk_size: 500 },
             Dimension { name: String::from("sensor_id"), chunk_size: 100 },
         ],
         values: vec![

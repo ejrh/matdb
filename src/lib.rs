@@ -2,7 +2,7 @@ use std::collections::{hash_map, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::{BufReader, Read, Write};
+use std::io::BufReader;
 use std::iter::zip;
 use std::ops::Index;
 use std::path::{Path, PathBuf};
@@ -66,6 +66,11 @@ mod buffer;
 
 use crate::buffer::{Buffer, BufferIter};
 
+mod storage;
+
+use crate::storage::{read_tag, skip_to_next_tag, write_tag};
+use crate::storage::Tag::{BlockTag, EndTag};
+
 impl From<std::io::Error> for Error {
     fn from(_: std::io::Error) -> Self {
         return Error::IoError;
@@ -120,38 +125,41 @@ impl<'db> Transaction<'db> {
     }
 
     pub fn load(&mut self) -> Result<(), Error> {
-        let mut file = File::open("test")?;
+        let file = File::open("test")?;
         let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
 
         loop {
-            let mut read_buffer:[u8; 4] = [0; 4];
+            let tag = read_tag(&mut src);
 
-            src.read(&mut read_buffer)?;
-
-            if read_buffer.eq("BLK:".as_bytes()) {
-                let mut buffer = Buffer::new(0);
-
-                let result = buffer.load(&mut src);
-
-                /* Pick the first row and use it as the chunk for for the whole block */
-                let mut values_array: Vec<Datum> = Vec::new();
-                let first = buffer.iter(&mut values_array).next();
-                if first.is_none() { continue; }
-                let key = self.database.schema.get_chunk_key(&values_array);
-
-                self.buffers.insert(key, buffer);
-
-                // WHY?  ZStd encoder seems to emit one byte that the decoder doesn't need to read
-                src.seek_relative(1);
-
-                //println!("Loaded buffer ending at {}", src.stream_position().unwrap());
-
-            } else if read_buffer.eq("END:".as_bytes()) {
-                break;
-            } else {
-                panic!("Unexpected data!");
+            match tag {
+                BlockTag => self.load_block(&mut src)?,
+                EndTag => break
             }
         }
+
+        Ok(())
+    }
+
+    pub fn load_block(&mut self, src: &mut BufReader<File>) -> Result<(), Error> {
+        let mut buffer = Buffer::new(0);
+
+        buffer.load(src)?;
+
+        /* Pick the first row and use it as the chunk for for the whole block */
+        let mut values_array: Vec<Datum> = Vec::new();
+        let first = buffer.iter(&mut values_array).next();
+        if first.is_none() { return Ok(()); }
+        let key = self.database.schema.get_chunk_key(&values_array);
+
+        self.buffers.insert(key, buffer);
+
+        /* ZStd leaves the last byte of a stream in the buffer, meaning we cant just read any other
+           data after it.  This seems to be the "hostage byte" in the decompressor:
+           https://github.com/facebook/zstd/blob/dev/lib/decompress/zstd_decompress.c#L2238
+           To work around it, we scan for something that looks like a tag.  If there is only
+           ever one byte to skip over, we should be able to do this unambiguously.  If not...?
+         */
+        skip_to_next_tag(src)?;
 
         Ok(())
     }
@@ -160,12 +168,11 @@ impl<'db> Transaction<'db> {
         let mut file = File::create("test")?;
 
         for buf in self.buffers.values() {
-            file.write("BLK:".as_bytes())?;
+            write_tag(&mut file, BlockTag)?;
             buf.save(&mut file)?;
-            //println!("Saved buffer ending at {}", file.stream_position().unwrap());
         }
 
-        file.write("END:".as_bytes())?;
+        write_tag(&mut file, EndTag)?;
 
         Ok(())
     }
