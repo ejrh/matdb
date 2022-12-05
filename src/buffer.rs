@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
-use std::{io, ptr};
+use std::{io, ptr, slice};
 use std::mem::size_of;
 
 use crate::{Datum, QueryRow};
@@ -173,10 +173,18 @@ impl Buffer {
         /* Read the values */
         self.values.clear();
         self.values.reserve(num_values);
-        for _ in 0..num_values {
-            decoder.read_exact(&mut read_buffer)?;
-            let val = usize::from_ne_bytes(read_buffer);
-            self.values.push(Some(val));
+
+        let mut missing_bytes: Vec<u8> = vec![1; num_values];
+        decoder.read_exact(&mut missing_bytes)?;
+
+        for &missing in &missing_bytes {
+            if missing == 1 {
+                self.values.push(None);
+            } else {
+                decoder.read_exact(&mut read_buffer)?;
+                let val = usize::from_ne_bytes(read_buffer);
+                self.values.push(Some(val));
+            }
         }
 
         decoder.finish();
@@ -197,10 +205,20 @@ impl Buffer {
         }
 
         /* Write the values */
+        let mut missing_bytes: Vec<u8> = Vec::new();
+        let mut values_bytes: Vec<u8> = Vec::new();
+
         for &val in &self.values {
-            let val = val.unwrap();
-            encoder.write_all(&usize::to_ne_bytes(val))?;
+            if val.is_none() {
+                missing_bytes.push(1);
+            } else {
+                missing_bytes.push(0);
+                values_bytes.extend(&usize::to_ne_bytes(val.unwrap()));
+            }
         }
+
+        encoder.write_all(missing_bytes.as_slice())?;
+        encoder.write_all(values_bytes.as_slice())?;
 
         encoder.finish()?;
 
