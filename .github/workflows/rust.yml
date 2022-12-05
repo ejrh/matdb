@@ -21,4 +21,4 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     - name: Run matdb
-      run: cargo run --verbose
+      run: cargo run --verbose --bin matdb
