@@ -5,7 +5,7 @@ use std::mem::size_of;
 
 use crate::{Datum, QueryRow};
 
-pub struct Buffer {
+pub struct Block {
     pub(crate) dimension_values: Vec<Vec<Datum>>,
     pub(crate) values: Vec<Option<Datum>>,
 }
@@ -19,16 +19,16 @@ struct SliceInsertionParams {
     offset: usize
 }
 
-pub struct BufferIter<'buf> {
-    buffer: &'buf Buffer,
+pub struct BlockIter<'buf> {
+    block: &'buf Block,
     indexes: Vec<usize>,
     value_index: usize,
     values_array: *mut Vec<Datum>
 }
 
-impl Buffer {
+impl Block {
     pub(crate) fn new(num_dimensions: usize) -> Self {
-        Buffer {
+        Block {
             dimension_values: vec![Vec::new(); num_dimensions],
             values: Vec::new()
         }
@@ -136,9 +136,9 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn iter<'buf>(&'buf self, values_array: &'buf mut Vec<Datum>) -> BufferIter {
-        BufferIter {
-            buffer: self,
+    pub(crate) fn iter<'buf>(&'buf self, values_array: &'buf mut Vec<Datum>) -> BlockIter {
+        BlockIter {
+            block: self,
             indexes: vec![0; self.dimension_values.len()],
             value_index: 0,
             values_array
@@ -226,13 +226,13 @@ impl Buffer {
     }
 }
 
-impl<'buf> BufferIter<'buf> {
+impl<'buf> BlockIter<'buf> {
     fn increment_indexes(&mut self) {
         self.value_index += 1;
         let mut incr_pos = self.indexes.len() - 1;
         loop {
             self.indexes[incr_pos] += 1;
-            if self.indexes[incr_pos] >= self.buffer.dimension_values[incr_pos].len() {
+            if self.indexes[incr_pos] >= self.block.dimension_values[incr_pos].len() {
                 if incr_pos == 0 { break; }
                 self.indexes[incr_pos] = 0;
                 incr_pos -= 1;
@@ -243,21 +243,21 @@ impl<'buf> BufferIter<'buf> {
     }
 }
 
-impl<'buf> Iterator for BufferIter<'buf> {
+impl<'buf> Iterator for BlockIter<'buf> {
     type Item = QueryRow;
 
     fn next(&mut self) -> Option<QueryRow>
     {
         loop {
-            // Check if indexes are already past the size of the buffer
-            if self.indexes[0] >= self.buffer.dimension_values[0].len() {
+            // Check if indexes are already past the size of the block
+            if self.indexes[0] >= self.block.dimension_values[0].len() {
                 return None;
             }
 
             // Turn this index into a single number and get the result
-            //let calculated_idx = self.buffer.get_index(&self.indexes);
+            //let calculated_idx = self.block.get_index(&self.indexes);
             //assert_eq!(self.value_index, calculated_idx);
-            let value: Option<Datum> = self.buffer.values[self.value_index];
+            let value: Option<Datum> = self.block.values[self.value_index];
 
             // If it's empty, increment and try the next one
             if value.is_none() {
@@ -269,7 +269,7 @@ impl<'buf> Iterator for BufferIter<'buf> {
             let va = unsafe { self.values_array.as_mut() }.unwrap();
             va.clear();
             for i in 0..self.indexes.len() {
-                va.push(self.buffer.dimension_values[i][self.indexes[i]]);
+                va.push(self.block.dimension_values[i][self.indexes[i]]);
             }
             va.push(value);
 
@@ -282,12 +282,12 @@ impl<'buf> Iterator for BufferIter<'buf> {
 
 #[cfg(test)]
 mod get_slice_insertion_params_tests {
-    use super::Buffer;
+    use super::Block;
 
     #[test]
     fn one_dimension() {
         // One empty dimension, can only insert in one place
-        let mut b = Buffer::new(1);
+        let mut b = Block::new(1);
         let params = b.get_slice_insertion_params(0, 0);
         assert_eq!(params.new_size, 1);
         assert_eq!(params.moves, 0);
@@ -336,7 +336,7 @@ mod get_slice_insertion_params_tests {
     #[test]
     fn two_dimension() {
         // One empty dimension, can only insert in one place
-        let mut b = Buffer::new(2);
+        let mut b = Block::new(2);
         b.dimension_values[1].push(0);
 
         let params = b.get_slice_insertion_params(0, 0);
@@ -387,11 +387,11 @@ mod get_slice_insertion_params_tests {
 
 #[cfg(test)]
 mod slice_insert_tests {
-    use super::Buffer;
+    use super::Block;
 
     #[test]
     fn one_dimension() {
-        let mut b = Buffer::new(1);
+        let mut b = Block::new(1);
 
         assert_eq!(b.dimension_values.len(), 1);
         assert_eq!(b.dimension_values[0].len(), 0);
@@ -437,7 +437,7 @@ mod slice_insert_tests {
 
     #[test]
     fn two_dimensions() {
-        let mut b = Buffer::new(2);
+        let mut b = Block::new(2);
 
         assert_eq!(b.dimension_values.len(), 2);
         assert_eq!(b.dimension_values[0].len(), 0);
@@ -461,12 +461,12 @@ mod slice_insert_tests {
 
 #[cfg(test)]
 mod iterate_tests {
-    use crate::buffer::Buffer;
+    use crate::block::Block;
     use crate::Datum;
 
     #[test]
-    fn empty_buffer() {
-        let mut b = Buffer::new(1);
+    fn empty_block() {
+        let mut b = Block::new(1);
 
         let mut values_array: Vec<Datum> = Vec::new();
         let count = b.iter(&mut values_array).count();
@@ -479,7 +479,7 @@ mod iterate_tests {
 
     #[test]
     fn one_dimension() {
-        let mut b = Buffer::new(1);
+        let mut b = Block::new(1);
 
         b.add_row(&[42, 99]);
 

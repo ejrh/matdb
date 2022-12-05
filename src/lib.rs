@@ -37,7 +37,7 @@ pub struct Schema {
     pub values: Vec<Value>,
 }
 
-pub struct ChunkKey {
+pub struct BlockKey {
     key_values : Vec<Datum>
 }
 
@@ -48,7 +48,7 @@ pub struct Database {
 
 pub struct Transaction<'db> {
     database: &'db Database,
-    buffers: HashMap<ChunkKey, Buffer>
+    blocks: HashMap<BlockKey, Block>
 }
 
 pub struct QueryRow {
@@ -56,15 +56,15 @@ pub struct QueryRow {
 }
 
 pub struct QueryIterator<'txn> {
-    buffer_iter: hash_map::Iter<'txn, ChunkKey, Buffer>,
-    buffer_key: Option<&'txn ChunkKey>,
-    value_iter: Option<BufferIter<'txn>>,
+    block_iter: hash_map::Iter<'txn, BlockKey, Block>,
+    block_key: Option<&'txn BlockKey>,
+    value_iter: Option<BlockIter<'txn>>,
     values_array: *mut Vec<Datum>
 }
 
-mod buffer;
+mod block;
 
-use crate::buffer::{Buffer, BufferIter};
+use crate::block::{Block, BlockIter};
 
 mod storage;
 
@@ -98,7 +98,7 @@ impl Database {
     pub fn new_transaction<'db>(&'db mut self) -> Result<Transaction<'db>, Error> {
         Ok(Transaction {
             database: self,
-            buffers: Default::default()
+            blocks: Default::default()
         })
     }
 }
@@ -106,8 +106,8 @@ impl Database {
 impl<'db> Transaction<'db> {
     pub fn add_row(&mut self, values: &[Datum]) -> Result<(), Error> {
         let key = self.database.schema.get_chunk_key(values);
-        let ref mut buffer = self.buffers.entry(key).or_insert_with(|| Buffer::new(self.database.schema.dimensions.len()));
-        buffer.add_row(values);
+        let ref mut block = self.blocks.entry(key).or_insert_with(|| Block::new(self.database.schema.dimensions.len()));
+        block.add_row(values);
         Ok(())
     }
 
@@ -117,8 +117,8 @@ impl<'db> Transaction<'db> {
 
     pub fn query(&'db self, values_array: &mut Vec<Datum>) -> QueryIterator<'db> {
         QueryIterator {
-            buffer_iter: self.buffers.iter(),
-            buffer_key: None,
+            block_iter: self.blocks.iter(),
+            block_key: None,
             value_iter: None,
             values_array
         }
@@ -141,17 +141,17 @@ impl<'db> Transaction<'db> {
     }
 
     pub fn load_block(&mut self, src: &mut BufReader<File>) -> Result<(), Error> {
-        let mut buffer = Buffer::new(0);
+        let mut block = Block::new(0);
 
-        buffer.load(src)?;
+        block.load(src)?;
 
         /* Pick the first row and use it as the chunk for for the whole block */
         let mut values_array: Vec<Datum> = Vec::new();
-        let first = buffer.iter(&mut values_array).next();
+        let first = block.iter(&mut values_array).next();
         if first.is_none() { return Ok(()); }
         let key = self.database.schema.get_chunk_key(&values_array);
 
-        self.buffers.insert(key, buffer);
+        self.blocks.insert(key, block);
 
         /* ZStd leaves the last byte of a stream in the buffer, meaning we cant just read any other
            data after it.  This seems to be the "hostage byte" in the decompressor:
@@ -167,7 +167,7 @@ impl<'db> Transaction<'db> {
     pub fn save(&mut self) -> Result<(), Error> {
         let mut file = File::create("test")?;
 
-        for buf in self.buffers.values() {
+        for buf in self.blocks.values() {
             write_tag(&mut file, BlockTag)?;
             buf.save(&mut file)?;
         }
@@ -178,9 +178,9 @@ impl<'db> Transaction<'db> {
     }
 }
 
-impl Eq for ChunkKey { }
+impl Eq for BlockKey { }
 
-impl PartialEq<Self> for ChunkKey {
+impl PartialEq<Self> for BlockKey {
     fn eq(&self, other: &Self) -> bool {
         for (&a, &b) in zip(&self.key_values, &other.key_values) {
             if a != b { return false }
@@ -189,7 +189,7 @@ impl PartialEq<Self> for ChunkKey {
     }
 }
 
-impl Hash for ChunkKey {
+impl Hash for BlockKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         for &v in &self.key_values {
             state.write_usize(v);
@@ -198,7 +198,7 @@ impl Hash for ChunkKey {
 }
 
 impl Schema {
-    fn get_chunk_key(&self, values: &[Datum]) -> ChunkKey {
+    fn get_chunk_key(&self, values: &[Datum]) -> BlockKey {
         let mut key_values : Vec<Datum> = Vec::new();
 
         for (dim_no, dim) in self.dimensions.iter().enumerate() {
@@ -207,7 +207,7 @@ impl Schema {
             key_values.push(key_value);
         }
 
-        ChunkKey { key_values }
+        BlockKey { key_values }
     }
 }
 
@@ -217,9 +217,9 @@ impl<'txn> Iterator for QueryIterator<'txn> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if self.value_iter.is_none() {
-                let (buffer_key, buffer) = self.buffer_iter.next()?;
-                self.buffer_key = Some(buffer_key);
-                self.value_iter = Some(buffer.iter(unsafe { self.values_array.as_mut().unwrap() }));
+                let (block_key, block) = self.block_iter.next()?;
+                self.block_key = Some(block_key);
+                self.value_iter = Some(block.iter(unsafe { self.values_array.as_mut().unwrap() }));
             }
 
             let iter = self.value_iter.as_mut().unwrap();

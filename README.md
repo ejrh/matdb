@@ -12,6 +12,10 @@ Current State
 
 Puts numbers in memory and reads them out again.
 
+Saves data to disk and loads it again.
+
+There is a test program called "sensor-log" that imports timeseries data from a text file.
+
 Concepts
 ---
 
@@ -21,13 +25,12 @@ Concepts
 
 *Row* - A group of column values corresponding to the values at a certain key. 
 
-*Segment* - A single database file consisting of a sequence of chunks.
+*Segment* - A single database file consisting of a sequence of blocks written in a single transaction.
 
-*Chunk* - A conveniently-sized set of rows with similar keys.
+*Block* - A conveniently-sized set of rows with similar keys.
 
 *Transaction* - A transient view of a database in which updates and queries can be made.  If updates are made, the transaction must be committed for these to be visible outside the transaction.
 
-*Database* - A set of rows, stored in a directory on disk. 
+*Database* - A set of rows, stored as a set of segments in a directory on disk. 
 
 *Schema* - A description of the keys and values in a database, and some parameters for how to organise them for efficiency.  The schema *cannot* be changed after database creation.
-
