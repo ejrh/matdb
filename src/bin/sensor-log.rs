@@ -4,7 +4,6 @@ use std::env;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Read, Seek, Write};
-use std::os::windows::prelude::MetadataExt;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Instant;
@@ -113,7 +112,7 @@ fn parse_value(s: &str) -> usize {
 }
 
 fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io::Result<()> {
-    let file_size = std::fs::metadata(filename)?.file_size();
+    let file_size = std::fs::metadata(filename)?.len();
     let file = File::open(filename)?;
     let mut reader = BufReader::new(file);
 
