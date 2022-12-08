@@ -41,6 +41,9 @@ fn insert_data(txn: &mut Transaction) {
             txn.add_row(&[i, j, i*1000 + j]);
             count += 1;
         }
+        if i % 100 == 0 {
+            txn.flush();
+        }
     }
     println!("Inserted {} rows in {:?}", count, now.elapsed());
 }

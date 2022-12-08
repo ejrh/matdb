@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
-use std::{io, ptr, slice};
+use std::{io, ptr};
 use std::mem::size_of;
 
 use crate::{Datum, QueryRow};

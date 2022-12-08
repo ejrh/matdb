@@ -1,11 +1,9 @@
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::path::Path;
-use std::str::FromStr;
 use std::time::Instant;
 
 use chrono::prelude::*;
@@ -90,6 +88,7 @@ impl<'s> Sensors<'s> {
             sensor: sensor.to_string(),
             kind: kind.to_string()
         };
+        self.add_sensor(sensor);
 
         self.save().unwrap();
 
@@ -121,7 +120,7 @@ fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io
     let mut line_buffer = String::new();
     let mut last_time_str = String::new();
     let mut last_time_ms: usize = 0;
-    for i in 1.. {
+    for _line_num in 1.. {
         line_buffer.clear();
         let nr = reader.read_line(&mut line_buffer)?;
         if nr == 0 {
@@ -151,7 +150,7 @@ fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io
         let sensor_id = sensors.get(component, sensor, kind);
 
         //println!("{} {} {}", time_ms, sensor_id, value);
-        txn.add_row(&[time_ms, sensor_id, value]);
+        txn.add_row(&[time_ms, sensor_id, value]).unwrap();
         count += 1;
 
         let pct = reader.stream_position()? * 10 / file_size;
@@ -169,7 +168,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     let mut sensors = Sensors::new();
-    sensors.load();
+    sensors.load().ok();
 
     /* Make a database */
     let mut matdb = matdb::Database::create(matdb::Schema {
@@ -180,30 +179,30 @@ fn main() {
         values: vec![
             Value { name: String::from("value")}
         ]
-    }, Path::new("testdb")).unwrap();
+    }, Path::new("sensordb")).unwrap();
 
     /* Start a transaction */
     let mut txn = matdb.new_transaction().unwrap();
 
     /* Load the file */
     let now = Instant::now();
-    load_file(&args[1], &mut sensors, &mut txn);
+    load_file(&args[1], &mut sensors, &mut txn).unwrap();
     println!("Loaded and inserted in {:?}", now.elapsed());
 
     /* Save the transaction */
     let now = Instant::now();
-    txn.save();
+    txn.commit().unwrap();
     println!("Saved in {:?}", now.elapsed());
 
     /* Check the data is ok */
-    let mut txn = matdb.new_transaction().unwrap();
+    let txn = matdb.new_transaction().unwrap();
     let now = Instant::now();
-    txn.load();
+    //txn.load();
     println!("Reloaded in {:?}", now.elapsed());
 
     let mut count = 0;
     let mut values_array: Vec<Datum> = Vec::new();
-    for row in txn.query(&mut values_array) {
+    for _row in txn.query(&mut values_array) {
         //println!("{} {} {}", row[0], row[1], row[2]);
         count += 1;
     }

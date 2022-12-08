@@ -1,5 +1,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, Write};
+use std::path::{Path, PathBuf};
+use crate::{SegmentId, TransactionId};
 
 const TAG_PREFIX: &[u8] = "MD:".as_bytes();
 const TAG_PREFIX_LENGTH: usize = TAG_PREFIX.len();
@@ -61,4 +63,32 @@ pub fn write_tag(file: &mut File, tag: Tag) -> std::io::Result<()> {
             Tag::EndTag => "MD:END".as_bytes()
         }
     )
+}
+
+pub fn get_segment_path(
+    database_path: &Path,
+    txn_id: TransactionId,
+    seg_id: SegmentId,
+    visible: bool
+) -> PathBuf {
+    let segment_filename = if visible {
+        format!("{:08x}.{:08x}", txn_id, seg_id)
+    } else {
+        format!("{:08x}.{:08x}.tmp", txn_id, seg_id)
+    };
+    database_path.join(segment_filename)
+}
+
+pub fn decode_segment_path(path: &Path) -> Option<(TransactionId, SegmentId, bool)> {
+    let filename = path.file_name()?.to_str()?;
+    let mut parts = filename.split(".");
+    let txn_id: TransactionId = TransactionId::from_str_radix(parts.next()?, 16).ok()?;
+    let seg_id: SegmentId = SegmentId::from_str_radix(parts.next()?, 16).ok()?;
+    let tail = parts.next();
+    let committed = match tail {
+        None => false,
+            Some("hello") => true,
+        _ => { return None; }
+    };
+    Some((txn_id, seg_id, committed))
 }
