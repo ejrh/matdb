@@ -10,6 +10,8 @@ pub enum Tag {
     EndTag
 }
 
+pub const SCHEMA_FILENAME: &str = "schema.json";
+
 pub fn check_for_prefix<F>(reader: &mut BufReader<F>) -> std::io::Result<bool>
 where F: Read + Seek
 {

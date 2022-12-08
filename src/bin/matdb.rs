@@ -1,34 +1,39 @@
 use std::path::Path;
 use std::time::Instant;
 use matdb;
-use matdb::{Datum, Dimension, QueryRow, Schema, Value};
+use matdb::{Database, Datum, Dimension, QueryRow, Schema, Transaction, Value};
 
-fn main() {
-    println!("Hello");
+fn create_database() -> Database {
+    let database_path = Path::new("testdb");
 
-    let mut matdb = matdb::Database::create(matdb::Schema {
-        dimensions: vec![
-            Dimension { name: String::from("time"), chunk_size: 500 },
-            Dimension { name: String::from("sensor_id"), chunk_size: 100 },
-        ],
-        values: vec![
-            Value { name: String::from("value")}
-        ]
-    }, Path::new("testdb")).unwrap();
-
-    println!("Created database");
+    let mut matdb;
+    if database_path.exists() {
+        matdb = matdb::Database::open(database_path).unwrap();
+        println!("Opened database");
+    } else {
+        matdb = matdb::Database::create(matdb::Schema {
+            dimensions: vec![
+                Dimension { name: String::from("time"), chunk_size: 500 },
+                Dimension { name: String::from("sensor_id"), chunk_size: 100 },
+            ],
+            values: vec![
+                Value { name: String::from("value") }
+            ]
+        }, database_path).unwrap();
+        println!("Created database");
+    }
 
     for dim in &matdb.schema.dimensions {
-        println!("Dim {:?} {:?}", dim.name, dim.chunk_size);
+        println!("    Dim {:?} {:?}", dim.name, dim.chunk_size);
     }
     for val in &matdb.schema.values {
-        println!("Val {:?}", val.name);
+        println!("    Val {:?}", val.name);
     }
 
-    let mut txn = matdb.new_transaction().unwrap();
+    matdb
+}
 
-    println!("Created transaction");
-
+fn insert_data(txn: &mut Transaction) {
     let mut count = 0;
     let now = Instant::now();
     for i in 0..1000 {
@@ -38,7 +43,9 @@ fn main() {
         }
     }
     println!("Inserted {} rows in {:?}", count, now.elapsed());
+}
 
+fn query_data(txn: &Transaction) {
     let mut count = 0;
     let now = Instant::now();
     let mut values_array: Vec<Datum> = Vec::new();
@@ -47,25 +54,24 @@ fn main() {
         count += 1;
     }
     println!("Queried {} rows in {:?}", count, now.elapsed());
+}
 
-    let now = Instant::now();
-    txn.save();
-    println!("Saved in {:?}", now.elapsed());
-    txn.commit();
+fn main() {
+    let mut matdb = create_database();
 
     let mut txn = matdb.new_transaction().unwrap();
-    let now = Instant::now();
-    txn.load();
-    println!("Loaded in {:?}", now.elapsed());
 
-    let mut count = 0;
-    let now = Instant::now();
-    let mut values_array: Vec<Datum> = Vec::new();
-    for row in txn.query(&mut values_array) {
-        //println!("Row: {:?}", row);
-        count += 1;
-    }
-    println!("Queried {} rows in {:?}", count, now.elapsed());
+    insert_data(&mut txn);
+    query_data(&txn);
 
-    println!("Goodbye");
+    let now = Instant::now();
+    txn.commit();
+    println!("Committed in {:?}", now.elapsed());
+
+    let mut txn2 = matdb.new_transaction().unwrap();
+    query_data(&txn2);
+
+    txn2.rollback();
+
+    println!("Done");
 }

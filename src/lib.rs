@@ -2,7 +2,7 @@ use std::collections::{hash_map, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::BufReader;
+use std::io::{BufReader, Read, Write};
 use std::iter::zip;
 use std::ops::Index;
 use std::path::{Path, PathBuf};
@@ -68,7 +68,7 @@ use crate::block::{Block, BlockIter};
 
 mod storage;
 
-use crate::storage::{read_tag, skip_to_next_tag, write_tag};
+use crate::storage::{read_tag, SCHEMA_FILENAME, skip_to_next_tag, write_tag};
 use crate::storage::Tag::{BlockTag, EndTag};
 
 impl From<std::io::Error> for Error {
@@ -77,9 +77,16 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<serde_json::Error> for Error {
+    fn from(_: serde_json::Error) -> Self {
+        return Error::IoError;
+    }
+}
+
 impl Database {
     pub fn create(schema: Schema, path: &Path) -> Result<Database, Error> {
-        let j = serde_json::to_string(&schema).unwrap();
+        std::fs::create_dir(path)?;
+        schema.save(path)?;
         Ok(Database {
             path: path.to_path_buf(),
             schema
@@ -87,8 +94,7 @@ impl Database {
     }
 
     pub fn open(path: &Path) -> Result<Database, Error> {
-        let schema = serde_json::from_str("{}").unwrap();
-
+        let schema = Schema::load(path)?;
         Ok(Database {
             path: path.to_path_buf(),
             schema
@@ -111,8 +117,14 @@ impl<'db> Transaction<'db> {
         Ok(())
     }
 
+    pub fn rollback(mut self) {
+        // TODO delete any temporary segment files written because we're not going to commit them
+        // Consume the Transaction, because you can't use it for anything else now
+    }
+
     pub fn commit(mut self) {
-        // Consume the Transaction, if nothing else
+        self.save();
+        // Consume the Transaction, because you can't use it for anything else now
     }
 
     pub fn query(&'db self, values_array: &mut Vec<Datum>) -> QueryIterator<'db> {
@@ -124,7 +136,7 @@ impl<'db> Transaction<'db> {
         }
     }
 
-    pub fn load(&mut self) -> Result<(), Error> {
+    pub(crate) fn load(&mut self) -> Result<(), Error> {
         let file = File::open("test")?;
         let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
 
@@ -140,7 +152,7 @@ impl<'db> Transaction<'db> {
         Ok(())
     }
 
-    pub fn load_block(&mut self, src: &mut BufReader<File>) -> Result<(), Error> {
+    pub(crate) fn load_block(&mut self, src: &mut BufReader<File>) -> Result<(), Error> {
         let mut block = Block::new(0);
 
         block.load(src)?;
@@ -164,7 +176,7 @@ impl<'db> Transaction<'db> {
         Ok(())
     }
 
-    pub fn save(&mut self) -> Result<(), Error> {
+    pub(crate) fn save(&mut self) -> Result<(), Error> {
         let mut file = File::create("test")?;
 
         for buf in self.blocks.values() {
@@ -208,6 +220,23 @@ impl Schema {
         }
 
         BlockKey { key_values }
+    }
+
+    fn save(&self, database_path: &Path) -> Result<(), Error> {
+        let schema_filename = database_path.join(SCHEMA_FILENAME);
+        let mut file = File::create(schema_filename)?;
+        let json = serde_json::to_string(&self)?;
+        file.write_all(json.as_bytes())?;
+        Ok(())
+    }
+
+    fn load(database_path: &Path) -> Result<Schema, Error> {
+        let schema_filename = database_path.join(SCHEMA_FILENAME);
+        let mut file = File::open(schema_filename)?;
+        let mut json = String::new();
+        file.read_to_string(&mut json)?;
+        let schema: Schema = serde_json::from_str(json.as_str())?;
+        Ok(schema)
     }
 }
 
