@@ -8,6 +8,12 @@ use serde::{Serialize, Deserialize};
 use serde_json;
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct Dimension {
+    pub name: String,
+    pub chunk_size: usize
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Schema {
     pub dimensions: Vec<Dimension>,
     pub values: Vec<Value>,
