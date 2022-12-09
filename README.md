@@ -1,6 +1,8 @@
 MatDB
 ====
 
+[![Rust build and automated tests](https://github.com/ejrh/matdb/actions/workflows/rust.yml/badge.svg)](https://github.com/ejrh/matdb/actions/workflows/rust.yml)
+
 MatDB is a very simple database designed for storing simple arrays of numbers, particularly fixed size integers.
 
 While it can store sparse matrices, it will perform much better on data that is key-dense.
