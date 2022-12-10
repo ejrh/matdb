@@ -8,7 +8,6 @@ use std::time::Instant;
 
 use chrono::prelude::*;
 use serde::{Serialize, Deserialize};
-use serde_json;
 use matdb::{Datum, Dimension, Transaction, Value};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -69,7 +68,7 @@ impl<'s> Sensors<'s> {
     fn save(&self) -> io::Result<()> {
         let mut file = File::create("sensors.json")?;
         let json: String = serde_json::to_string_pretty(&self.sensor_array)?;
-        file.write(json.as_bytes())?;
+        file.write_all(json.as_bytes())?;
 
         Ok(())
     }
@@ -116,7 +115,6 @@ fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io
     let mut reader = BufReader::new(file);
 
     let mut last_pct = 0;
-    let mut count = 0;
     let mut line_buffer = String::new();
     let mut last_time_str = String::new();
     let mut last_time_ms: usize = 0;
@@ -127,13 +125,13 @@ fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io
             break;
         }
 
-        let line = line_buffer.trim_end_matches("\n");
+        let line = line_buffer.trim_end_matches('\n');
 
-        let line = line.trim_start_matches("\0");
+        let line = line.trim_start_matches('\0');
 
         //println!("line [{}]", line);
 
-        let parts = line.split("\t").collect::<Vec<&str>>();
+        let parts = line.split('\t').collect::<Vec<&str>>();
         let time_ms = if last_time_str.eq(parts[0]) {
             last_time_ms
         } else {
@@ -150,8 +148,7 @@ fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io
         let sensor_id = sensors.get(component, sensor, kind);
 
         //println!("{} {} {}", time_ms, sensor_id, value);
-        txn.add_row(&[time_ms, sensor_id, value]).unwrap();
-        count += 1;
+        txn.add_row(&[time_ms, sensor_id, value]);
 
         let pct = reader.stream_position()? * 10 / file_size;
         if pct > last_pct {

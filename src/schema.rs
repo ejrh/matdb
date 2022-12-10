@@ -5,7 +5,6 @@ use crate::{BlockKey, Datum, Dimension, Error, Value};
 use crate::storage::SCHEMA_FILENAME;
 
 use serde::{Serialize, Deserialize};
-use serde_json;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Dimension {

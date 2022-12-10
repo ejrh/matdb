@@ -16,17 +16,16 @@ impl<'db> Transaction<'db> {
     pub fn new(database: &'db mut Database) -> Transaction {
         Transaction {
             id: None,
-            database: database,
+            database,
             blocks: Default::default(),
             segments: Vec::new()
         }
     }
 
-    pub fn add_row(&mut self, values: &[Datum]) -> Result<(), Error> {
+    pub fn add_row(&mut self, values: &[Datum]) {
         let key = self.database.schema.get_chunk_key(values);
-        let ref mut block = self.blocks.entry(key).or_insert_with(|| Block::new(self.database.schema.dimensions.len()));
+        let block = self.blocks.entry(key).or_insert_with(|| Block::new(self.database.schema.dimensions.len()));
         block.add_row(values);
-        Ok(())
     }
 
     /**
@@ -70,7 +69,7 @@ impl<'db> Transaction<'db> {
         let seg_id = self.segments.len() as SegmentId;
 
         /* Create a new segment and save all remaining blocks to into. */
-        let moved_blocks = std::mem::replace(&mut self.blocks, Default::default());
+        let moved_blocks = std::mem::take(&mut self.blocks);
 
         let new_segment = Segment::create(
             self.database.path.as_path(),
@@ -100,7 +99,7 @@ impl<'db> Transaction<'db> {
      * Delete any temporary segment files.
      */
     fn rollback_segments(&mut self) {
-        let moved_segments = std::mem::replace(&mut self.segments, Vec::new());
+        let moved_segments = std::mem::take(&mut self.segments);
         for segment in moved_segments {
             segment.delete().unwrap();
         }
@@ -108,7 +107,7 @@ impl<'db> Transaction<'db> {
 
     fn get_transaction_id(&mut self) -> TransactionId {
         if self.id.is_some() {
-            return self.id.unwrap();
+            self.id.unwrap()
         } else {
             let id = self.database.get_next_transaction_id();
             self.id = Some(id);

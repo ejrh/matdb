@@ -51,14 +51,11 @@ fn scan_files(database_path: &Path) -> Result<ScanResult, Error> {
     let mut max_seen_id = 0;
     for entry in std::fs::read_dir(database_path)? {
         let entry = entry.unwrap();
-        match decode_segment_path(&entry.path()) {
-            Some((txn_id, _, _)) => {
-                if txn_id > max_seen_id {
-                    max_seen_id = txn_id;
-                }
-            },
-            None => ()
-        }
+        if let Some((txn_id, _, _)) = decode_segment_path(&entry.path()) {
+            if txn_id > max_seen_id {
+                max_seen_id = txn_id;
+            }
+        };
     }
 
     Ok(ScanResult {

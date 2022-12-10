@@ -48,9 +48,9 @@ where R: BufRead
     reader.read_exact(&mut buffer).expect("Insuffient data for tag");
 
     if buffer.eq("MD:BLK".as_bytes()) {
-        return Tag::BlockTag;
+        Tag::BlockTag
     } else if buffer.eq("MD:END".as_bytes()) {
-        return Tag::EndTag;
+        Tag::EndTag
     } else {
         panic!("Unknown tag")
     }
@@ -81,7 +81,7 @@ pub fn get_segment_path(
 
 pub fn decode_segment_path(path: &Path) -> Option<(TransactionId, SegmentId, bool)> {
     let filename = path.file_name()?.to_str()?;
-    let mut parts = filename.split(".");
+    let mut parts = filename.split('.');
     let txn_id: TransactionId = TransactionId::from_str_radix(parts.next()?, 16).ok()?;
     let seg_id: SegmentId = SegmentId::from_str_radix(parts.next()?, 16).ok()?;
     let tail = parts.next();

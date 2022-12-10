@@ -53,13 +53,13 @@ pub struct QueryIterator<'txn> {
 
 impl From<std::io::Error> for Error {
     fn from(_: std::io::Error) -> Self {
-        return Error::IoError;
+        Error::IoError
     }
 }
 
 impl From<serde_json::Error> for Error {
     fn from(_: serde_json::Error) -> Self {
-        return Error::IoError;
+        Error::IoError
     }
 }
 
@@ -95,23 +95,21 @@ impl<'txn> Iterator for QueryIterator<'txn> {
 
             let iter = self.value_iter.as_mut().unwrap();
 
-            loop {
-                match iter.next() {
-                    Some(row) => {
-                        return Some(row);
-                    }
-                    None => { break; }
+            match iter.next() {
+                Some(row) => {
+                    return Some(row);
+                }
+                None => {
+                    self.value_iter = None;
                 }
             }
-
-            self.value_iter = None;
         }
     }
 }
 
 impl QueryRow {
     fn new(values_array: *const Vec<Datum>) -> Self {
-        return QueryRow {
+        QueryRow {
             values_array
         }
     }

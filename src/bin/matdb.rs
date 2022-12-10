@@ -1,17 +1,16 @@
 use std::path::Path;
 use std::time::Instant;
-use matdb;
-use matdb::{Database, Datum, Dimension, QueryRow, Schema, Transaction, Value};
+use matdb::{Database, Datum, Dimension, Schema, Transaction, Value};
 
 fn create_database() -> Database {
     let database_path = Path::new("testdb");
 
-    let mut matdb;
+    let matdb;
     if database_path.exists() {
-        matdb = matdb::Database::open(database_path).unwrap();
+        matdb = Database::open(database_path).unwrap();
         println!("Opened database");
     } else {
-        matdb = matdb::Database::create(matdb::Schema {
+        matdb = Database::create(Schema {
             dimensions: vec![
                 Dimension { name: String::from("time"), chunk_size: 500 },
                 Dimension { name: String::from("sensor_id"), chunk_size: 100 },
@@ -42,7 +41,7 @@ fn insert_data(txn: &mut Transaction) {
             count += 1;
         }
         if i % 100 == 0 {
-            txn.flush();
+            txn.flush().unwrap();
         }
     }
     println!("Inserted {} rows in {:?}", count, now.elapsed());
@@ -52,7 +51,7 @@ fn query_data(txn: &Transaction) {
     let mut count = 0;
     let now = Instant::now();
     let mut values_array: Vec<Datum> = Vec::new();
-    for row in txn.query(&mut values_array) {
+    for _row in txn.query(&mut values_array) {
         //println!("Row: {:?}", row);
         count += 1;
     }
@@ -68,10 +67,10 @@ fn main() {
     query_data(&txn);
 
     let now = Instant::now();
-    txn.commit();
+    txn.commit().unwrap();
     println!("Committed in {:?}", now.elapsed());
 
-    let mut txn2 = matdb.new_transaction().unwrap();
+    let txn2 = matdb.new_transaction().unwrap();
     query_data(&txn2);
 
     txn2.rollback();

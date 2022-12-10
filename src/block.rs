@@ -111,12 +111,12 @@ impl Block {
         let mut num_moves = 1;
         let mut move_step = 1;
 
-        for i in 0..dim_no {
-            num_moves *= sizes[i];
+        for size in sizes.iter().take(dim_no) {
+            num_moves *= size;
         }
 
-        for i in (dim_no + 1)..sizes.len() {
-            move_step *= sizes[i];
+        for size in sizes.iter().skip(dim_no + 1) {
+            move_step *= size;
         }
 
         let move_size = sizes[dim_no] * move_step;
@@ -209,11 +209,11 @@ impl Block {
         let mut values_bytes: Vec<u8> = Vec::new();
 
         for &val in &self.values {
-            if val.is_none() {
-                missing_bytes.push(1);
-            } else {
+            if let Some(value) = val {
                 missing_bytes.push(0);
-                values_bytes.extend(&usize::to_ne_bytes(val.unwrap()));
+                values_bytes.extend(usize::to_ne_bytes(value));
+            } else {
+                missing_bytes.push(1);
             }
         }
 
