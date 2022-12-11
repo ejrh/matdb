@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
-use crate::{BlockKey, Datum, Dimension, Error, Value};
+use crate::{BlockKey, Datum, Error, Value};
 use crate::storage::SCHEMA_FILENAME;
 
 use serde::{Serialize, Deserialize};

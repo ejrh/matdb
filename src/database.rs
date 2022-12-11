@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
-use crate::{Error, TransactionId};
+use crate::{Error, SegmentId, TransactionId};
 use crate::schema::Schema;
+use crate::segment::Segment;
 use crate::transaction::Transaction;
 
 use crate::storage::{decode_segment_path};

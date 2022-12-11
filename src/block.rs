@@ -3,7 +3,8 @@ use std::io::{BufRead, Read, Write};
 use std::{io, ptr};
 use std::mem::size_of;
 
-use crate::{Datum, QueryRow};
+use crate::{Datum};
+use crate::query::QueryRow;
 
 pub struct Block {
     pub(crate) dimension_values: Vec<Vec<Datum>>,

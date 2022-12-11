@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{BlockKey, Datum, Error, QueryIterator, SegmentId, TransactionId};
+use crate::{BlockKey, Datum, Error, SegmentId, TransactionId};
 use crate::block::Block;
 use crate::database::Database;
+use crate::query::QueryIterator;
 use crate::segment::Segment;
 
 pub struct Transaction<'db> {
@@ -51,12 +52,7 @@ impl<'db> Transaction<'db> {
     }
 
     pub fn query(&'db self, values_array: &mut Vec<Datum>) -> QueryIterator<'db> {
-        QueryIterator {
-            block_iter: self.blocks.iter(),
-            block_key: None,
-            value_iter: None,
-            values_array
-        }
+        QueryIterator::new(&self.blocks, values_array)
     }
 
     /**
