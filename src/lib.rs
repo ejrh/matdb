@@ -5,6 +5,7 @@ use std::iter::zip;
 use serde::{Serialize, Deserialize};
 
 mod block;
+mod cache;
 mod database;
 mod query;
 mod segment;

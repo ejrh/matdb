@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use crate::{Error, SegmentId, TransactionId};
+use crate::cache::Cache;
 use crate::schema::Schema;
 use crate::segment::Segment;
 use crate::transaction::Transaction;
@@ -9,7 +10,8 @@ use crate::storage::{decode_segment_path};
 pub struct Database {
     pub path: PathBuf,
     pub schema: Schema,
-    pub next_transaction_id: TransactionId
+    pub next_transaction_id: TransactionId,
+    pub cached_segments: Cache<(TransactionId, SegmentId), Segment>
 }
 
 struct ScanResult {
@@ -23,7 +25,8 @@ impl Database {
         Ok(Database {
             path: path.to_path_buf(),
             schema,
-            next_transaction_id: 1
+            next_transaction_id: 1,
+            cached_segments: Cache::new(),
         })
     }
 
@@ -33,7 +36,8 @@ impl Database {
         Ok(Database {
             path: path.to_path_buf(),
             schema,
-            next_transaction_id: scan.next_transaction_id
+            next_transaction_id: scan.next_transaction_id,
+            cached_segments: Cache::new(),
         })
     }
 
