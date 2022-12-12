@@ -1,4 +1,7 @@
 use std::path::{Path, PathBuf};
+
+use log::{debug, info};
+
 use crate::{Error, SegmentId, TransactionId};
 use crate::cache::Cache;
 use crate::schema::Schema;
@@ -22,6 +25,10 @@ impl Database {
     pub fn create(schema: Schema, path: &Path) -> Result<Database, Error> {
         std::fs::create_dir(path)?;
         schema.save(path)?;
+        info!("Created database in {:?}", path);
+        debug!("Dimensions: {:?}", schema.dimensions.iter().map(|d| (&d.name, d.chunk_size)).collect::<Vec<_>>());
+        debug!("Values: {:?}", schema.values.iter().map(|v| &v.name).collect::<Vec<_>>());
+
         Ok(Database {
             path: path.to_path_buf(),
             schema,
@@ -33,6 +40,7 @@ impl Database {
     pub fn open(path: &Path) -> Result<Database, Error> {
         let schema = Schema::load(path)?;
         let scan = scan_files(path)?;
+        info!("Opened database in {:?}", path);
         Ok(Database {
             path: path.to_path_buf(),
             schema,
@@ -42,12 +50,14 @@ impl Database {
     }
 
     pub fn new_transaction<'db>(&'db mut self) -> Result<Transaction<'db>, Error> {
+        info!("Created transaction with horizon < {:?}", self.next_transaction_id);
         Ok(Transaction::new(self))
     }
 
     pub(crate) fn get_next_transaction_id(&mut self) -> TransactionId {
         let txn_id = self.next_transaction_id;
         self.next_transaction_id += 1;
+        info!("Allocated transaction id {:?}", txn_id);
         txn_id
     }
 }

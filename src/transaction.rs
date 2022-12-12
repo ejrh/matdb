@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use log::{debug, info};
+
 use crate::{BlockKey, Datum, Error, SegmentId, TransactionId};
 use crate::block::Block;
 use crate::database::Database;
@@ -48,6 +50,7 @@ impl<'db> Transaction<'db> {
     pub fn commit(mut self) -> Result<(), Error> {
         self.flush()?;
         self.commit_segments()?;
+        info!("Committed transaction with id {:?}", self.id);
         Ok(())
     }
 
@@ -87,6 +90,7 @@ impl<'db> Transaction<'db> {
             let segment = self.segments.pop();
             let mut segment = segment.unwrap();
             segment.make_visible(&self.database.path)?;
+            debug!("Made segment visible {:?}", segment.path);
         }
         Ok(())
     }
@@ -97,7 +101,9 @@ impl<'db> Transaction<'db> {
     fn rollback_segments(&mut self) {
         let moved_segments = std::mem::take(&mut self.segments);
         for segment in moved_segments {
+            let path = segment.path.clone();
             segment.delete().unwrap();
+            debug!("Deleted cancelled segment {:?}", path);
         }
     }
 

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use log::debug;
 use zstd::zstd_safe;
 use crate::block::Block;
 use crate::storage::{get_segment_path, read_tag, skip_to_next_tag, write_tag};
@@ -10,9 +11,9 @@ use crate::{BlockKey, Datum, Error, SegmentId, TransactionId};
 use crate::schema::Schema;
 
 pub struct Segment {
-    txn_id: TransactionId,
-    id: SegmentId,
-    path: PathBuf,
+    pub txn_id: TransactionId,
+    pub id: SegmentId,
+    pub path: PathBuf,
     cached_blocks: HashMap<BlockKey, Block>
 }
 
@@ -53,6 +54,8 @@ impl Segment {
             }
         }
 
+        debug!("Read segment file {:?}", self.path);
+
         Ok(())
     }
 
@@ -89,6 +92,8 @@ impl Segment {
         }
 
         write_tag(&mut file, EndTag)?;
+
+        debug!("Wrote segment file {:?}", self.path);
 
         Ok(())
     }

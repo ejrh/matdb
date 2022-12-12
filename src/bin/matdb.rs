@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::time::Instant;
+
 use matdb::{Database, Datum, Dimension, Schema, Transaction, Value};
 
 fn create_database() -> Database {
@@ -8,7 +9,6 @@ fn create_database() -> Database {
     let matdb;
     if database_path.exists() {
         matdb = Database::open(database_path).unwrap();
-        println!("Opened database");
     } else {
         matdb = Database::create(Schema {
             dimensions: vec![
@@ -19,14 +19,6 @@ fn create_database() -> Database {
                 Value { name: String::from("value") }
             ]
         }, database_path).unwrap();
-        println!("Created database");
-    }
-
-    for dim in &matdb.schema.dimensions {
-        println!("    Dim {:?} {:?}", dim.name, dim.chunk_size);
-    }
-    for val in &matdb.schema.values {
-        println!("    Val {:?}", val.name);
     }
 
     matdb
@@ -59,6 +51,10 @@ fn query_data(txn: &Transaction) {
 }
 
 fn main() {
+    stderrlog::new()
+        .verbosity(3)
+        .init().unwrap();
+
     let mut matdb = create_database();
 
     let mut txn = matdb.new_transaction().unwrap();
