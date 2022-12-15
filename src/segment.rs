@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+
 use log::debug;
 use zstd::zstd_safe;
+
 use crate::block::Block;
 use crate::storage::{get_segment_path, read_tag, skip_to_next_tag, write_tag};
 use crate::storage::Tag::{BlockTag, EndTag};

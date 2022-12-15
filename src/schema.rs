@@ -1,10 +1,11 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
-use crate::{BlockKey, Datum, Error, Value};
-use crate::storage::SCHEMA_FILENAME;
 
 use serde::{Serialize, Deserialize};
+
+use crate::{BlockKey, Datum, Error, Value};
+use crate::storage::SCHEMA_FILENAME;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Dimension {

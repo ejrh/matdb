@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, Write};
 use std::path::{Path, PathBuf};
+
 use crate::{SegmentId, TransactionId};
 
 const TAG_PREFIX: &[u8] = "MD:".as_bytes();

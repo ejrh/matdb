@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use chrono::prelude::*;
 use serde::{Serialize, Deserialize};
+
 use matdb::{Datum, Dimension, Transaction, Value};
 
 #[derive(Serialize, Deserialize, Debug)]

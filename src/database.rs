@@ -6,9 +6,8 @@ use crate::{Error, SegmentId, TransactionId};
 use crate::cache::Cache;
 use crate::schema::Schema;
 use crate::segment::Segment;
+use crate::storage::decode_segment_path;
 use crate::transaction::Transaction;
-
-use crate::storage::{decode_segment_path};
 
 pub struct Database {
     pub path: PathBuf,

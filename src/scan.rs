@@ -214,7 +214,6 @@ impl<'txn> Ord for QueuedItem<'txn> {
 mod block_sorter_tests {
     use crate::block::Block;
     use crate::scan::{Scan, QueuedItem};
-    use crate::scan::Type::Block;
 
     #[test]
     fn empty_block_sorter() {
