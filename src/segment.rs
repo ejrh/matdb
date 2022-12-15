@@ -65,10 +65,9 @@ impl Segment {
         block.load(src)?;
 
         /* Pick the first row and use it as the chunk for for the whole block */
-        let mut values_array: Vec<Datum> = Vec::new();
-        let first = block.iter(&mut values_array).next();
+        let first = block.iter().next();
         if first.is_none() { return Ok(()); }
-        let key = schema.get_chunk_key(&values_array);
+        let key = schema.get_chunk_key(&first.unwrap());
 
         self.cached_blocks.insert(key, block);
 

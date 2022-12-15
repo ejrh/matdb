@@ -42,8 +42,7 @@ fn insert_data(txn: &mut Transaction) {
 fn query_data(txn: &Transaction) {
     let mut count = 0;
     let now = Instant::now();
-    let mut values_array: Vec<Datum> = Vec::new();
-    for _row in txn.query(&mut values_array) {
+    for _row in txn.query() {
         //println!("Row: {:?}", row);
         count += 1;
     }

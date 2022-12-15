@@ -5,14 +5,14 @@ use log::{debug, info};
 use crate::{BlockKey, Datum, Error, SegmentId, TransactionId};
 use crate::block::Block;
 use crate::database::Database;
-use crate::query::QueryIterator;
+use crate::scan::Scan;
 use crate::segment::Segment;
 
 pub struct Transaction<'db> {
-    id: Option<TransactionId>,
-    database: &'db mut Database,
-    blocks: HashMap<BlockKey, Block>,
-    segments: Vec<Segment>
+    pub(crate) id: Option<TransactionId>,
+    pub(crate) database: &'db mut Database,
+    pub(crate) blocks: HashMap<BlockKey, Block>,
+    pub(crate) segments: Vec<Segment>
 }
 
 impl<'db> Transaction<'db> {
@@ -54,8 +54,8 @@ impl<'db> Transaction<'db> {
         Ok(())
     }
 
-    pub fn query(&'db self, values_array: &mut Vec<Datum>) -> QueryIterator<'db> {
-        QueryIterator::new(&self.blocks, values_array)
+    pub fn query(&'db self) -> Scan<'db> {
+        Scan::new(self.id.unwrap_or(0))
     }
 
     /**
@@ -115,6 +115,12 @@ impl<'db> Transaction<'db> {
             self.id = Some(id);
             id
         }
+    }
+
+    pub(crate) fn get_visible_segments(&self) -> Vec<(TransactionId, SegmentId)> {
+        let segments = self.database.get_committed_segments();
+        //segments.extend(self.segments.iter().map(|s|))
+        segments
     }
 }
 

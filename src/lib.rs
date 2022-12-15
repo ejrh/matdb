@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt::{Debug};
 use std::hash::{Hash, Hasher};
 use std::iter::zip;
@@ -9,6 +10,7 @@ mod cache;
 mod database;
 mod query;
 mod segment;
+mod scan;
 mod schema;
 mod storage;
 mod transaction;
@@ -28,6 +30,7 @@ pub type Datum = usize;
 
 pub type TransactionId = u32;
 pub type SegmentId = u16;
+pub type BlockNum = u16;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Value {
@@ -67,4 +70,9 @@ impl Hash for BlockKey {
             state.write_usize(v);
         }
     }
+}
+
+pub(crate) fn compare_points(num_dims: usize, point1: &Vec<Datum>, point2: &Vec<Datum>) -> Ordering
+{
+    Ord::cmp(&point1[0..num_dims], &point2[0..num_dims])
 }

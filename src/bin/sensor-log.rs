@@ -198,8 +198,7 @@ fn main() {
     println!("Reloaded in {:?}", now.elapsed());
 
     let mut count = 0;
-    let mut values_array: Vec<Datum> = Vec::new();
-    for _row in txn.query(&mut values_array) {
+    for _row in txn.query() {
         //println!("{} {} {}", row[0], row[1], row[2]);
         count += 1;
     }

@@ -4,7 +4,6 @@ use std::{io, ptr};
 use std::mem::size_of;
 
 use crate::{Datum};
-use crate::query::QueryRow;
 
 pub struct Block {
     pub(crate) dimension_values: Vec<Vec<Datum>>,
@@ -20,11 +19,11 @@ struct SliceInsertionParams {
     offset: usize
 }
 
+#[derive(Clone)]
 pub struct BlockIter<'buf> {
     block: &'buf Block,
     indexes: Vec<usize>,
-    value_index: usize,
-    values_array: *mut Vec<Datum>
+    value_index: usize
 }
 
 impl Block {
@@ -137,12 +136,11 @@ impl Block {
         }
     }
 
-    pub(crate) fn iter<'buf>(&'buf self, values_array: &'buf mut Vec<Datum>) -> BlockIter {
+    pub(crate) fn iter<'buf>(&'buf self) -> BlockIter {
         BlockIter {
             block: self,
             indexes: vec![0; self.dimension_values.len()],
-            value_index: 0,
-            values_array
+            value_index: 0
         }
     }
 
@@ -245,9 +243,9 @@ impl<'buf> BlockIter<'buf> {
 }
 
 impl<'buf> Iterator for BlockIter<'buf> {
-    type Item = QueryRow;
+    type Item = Vec<Datum>;
 
-    fn next(&mut self) -> Option<QueryRow>
+    fn next(&mut self) -> Option<Vec<Datum>>
     {
         loop {
             // Check if indexes are already past the size of the block
@@ -267,8 +265,7 @@ impl<'buf> Iterator for BlockIter<'buf> {
             }
 
             let value = value.unwrap();
-            let va = unsafe { self.values_array.as_mut() }.unwrap();
-            va.clear();
+            let mut va = Vec::new();
             for i in 0..self.indexes.len() {
                 va.push(self.block.dimension_values[i][self.indexes[i]]);
             }
@@ -276,7 +273,7 @@ impl<'buf> Iterator for BlockIter<'buf> {
 
             // Move to to the next index and return the row
             self.increment_indexes();
-            return Some(QueryRow::new(self.values_array));
+            return Some(va);
         }
     }
 }
@@ -469,12 +466,11 @@ mod iterate_tests {
     fn empty_block() {
         let mut b = Block::new(1);
 
-        let mut values_array: Vec<Datum> = Vec::new();
-        let count = b.iter(&mut values_array).count();
+        let count = b.iter().count();
         assert_eq!(count, 0);
 
         b.add_dimension_value(0, 42);
-        let count = b.iter(&mut values_array).count();
+        let count = b.iter().count();
         assert_eq!(count, 0);
     }
 
@@ -484,13 +480,12 @@ mod iterate_tests {
 
         b.add_row(&[42, 99]);
 
-        let mut values_array: Vec<Datum> = Vec::new();
-        let items : Vec<_> = b.iter(&mut values_array).collect();
+        let items : Vec<_> = b.iter().collect();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0][0], 42);
 
         b.values[0] = None;
-        let count = b.iter(&mut values_array).count();
+        let count = b.iter().count();
         assert_eq!(count, 0);
     }
 }

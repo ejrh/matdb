@@ -60,6 +60,12 @@ impl Database {
         info!("Allocated transaction id {:?}", txn_id);
         txn_id
     }
+
+    pub(crate) fn get_committed_segments(&self) -> Vec<(TransactionId, SegmentId)> {
+        let mut segments = Vec::new();
+
+        segments
+    }
 }
 
 fn scan_files(database_path: &Path) -> Result<ScanResult, Error> {
