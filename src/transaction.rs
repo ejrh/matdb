@@ -55,7 +55,18 @@ impl<'db> Transaction<'db> {
     }
 
     pub fn query(&'db self) -> Scan<'db> {
-        Scan::new(self.id.unwrap_or(0))
+        let num_dims = self.database.schema.dimensions.len();
+        let mut scan = Scan::new(num_dims, self.id.unwrap_or(0));
+        for (txn_id, seg_id) in self.database.get_committed_segments() {
+            scan.add_segment_id(txn_id, seg_id);
+        }
+        for seg in &self.segments {
+            scan.add_segment(seg);
+        }
+        for (_, block) in &self.blocks {
+            scan.add_block(block);
+        }
+        scan
     }
 
     /**

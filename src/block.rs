@@ -223,6 +223,10 @@ impl Block {
 
         Ok(())
     }
+
+    pub(crate) fn get_start_point(&self) -> Option<Vec<Datum>> {
+        self.iter().next()
+    }
 }
 
 impl<'buf> BlockIter<'buf> {

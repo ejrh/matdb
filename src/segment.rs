@@ -14,7 +14,7 @@ pub struct Segment {
     pub txn_id: TransactionId,
     pub id: SegmentId,
     pub path: PathBuf,
-    cached_blocks: HashMap<BlockKey, Block>
+    pub(crate) cached_blocks: HashMap<BlockKey, Block>
 }
 
 impl Segment {

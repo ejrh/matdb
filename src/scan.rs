@@ -7,11 +7,13 @@ use std::ptr::replace;
 use crate::block::{Block, BlockIter};
 use crate::{BlockNum, compare_points, Datum, SegmentId, Transaction, TransactionId};
 use crate::query::QueryRow;
+use crate::segment::Segment;
 
 pub(crate) enum Type<'txn> {
-    Segment(TransactionId, SegmentId),
-    SegmentBlock(TransactionId, SegmentId, BlockNum),
-    LocalBlock(&'txn Block),
+    SegmentId(TransactionId, SegmentId),
+    Segment(&'txn Segment),
+    BlockId(TransactionId, SegmentId, BlockNum),
+    Block(&'txn Block),
 }
 
 pub(crate) struct QueuedItem<'txn> {
@@ -44,41 +46,84 @@ pub(crate) struct LiveItem<'txn> {
  * When a block iterator is exhausted, it is removed from the live set.
  */
 pub struct Scan<'txn> {
+    num_dims: usize,
     this_txn_id: TransactionId,
     queue: BinaryHeap<QueuedItem<'txn>>,
     live: Vec<LiveItem<'txn>>
 }
 
 impl<'txn> Scan<'txn> {
-    pub(crate) fn new(txn_id: TransactionId) -> Scan<'txn> {
+    pub(crate) fn new(num_dims: usize, txn_id: TransactionId) -> Scan<'txn> {
         Scan {
+            num_dims,
             this_txn_id: txn_id,
             queue: Default::default(),
             live: Default::default()
         }
     }
 
-    pub(crate) fn add(&mut self, item: QueuedItem<'txn>) {
-        self.queue.push(item)
+    pub(crate) fn add_segment_id(&mut self, txn_id: TransactionId, seg_id: SegmentId) {
+        let start_point = Some(vec![0, 0]);  //TODO should know the segment coords
+        if start_point.is_none() {
+            return;
+        }
+        let start_point = start_point.unwrap();
+        self.queue.push(QueuedItem {
+            start_point,
+            item_type: Type::SegmentId(txn_id, seg_id)
+        })
+    }
+
+    pub(crate) fn add_segment(&mut self, segment: &'txn Segment) {
+        let start_point = Some(vec![0, 0]);  //TODO should know the segment coords
+        let start_point = segment.cached_blocks.values().flat_map(|x| x.get_start_point()).min();
+        if start_point.is_none() {
+            return;
+        }
+        let start_point = start_point.unwrap();
+        self.queue.push(QueuedItem {
+            start_point,
+            item_type: Type::Segment(&segment)
+        });
+    }
+
+    pub(crate) fn add_block(&mut self, block: &'txn Block) {
+        let start_point = block.get_start_point();
+        if start_point.is_none() {
+            return;
+        }
+        let start_point = start_point.unwrap();
+        self.queue.push(QueuedItem {
+            start_point,
+            item_type: Type::Block(&block)
+        });
     }
 
     fn check_queue(&mut self, current: &Vec<Datum>) {
         while let Some(next_queue_item) = self.queue.peek() {
             /* If we already have one and the first queued thing starts after it, do nothing. */
-            if compare_points(2,&current, &next_queue_item.start_point).is_gt() {
+            if compare_points(self.num_dims,&next_queue_item.start_point, &current).is_gt() {
                 return;
             }
 
             /* Otherwise pop at least one queued thing. */
-            let next_queue_item = self.queue.pop().unwrap();
-            match next_queue_item.item_type {
-                Type::Segment(txn_id, seg_id) => {
+            let queue_item = self.queue.pop().unwrap();
+            match queue_item.item_type {
+                Type::SegmentId(txn_id, seg_id) => {
+                    //TODO get the segment from the cache and add it
                     todo!();
                 }
-                Type::SegmentBlock(txn_id, seg_id, block_num) => {
+                Type::Segment(segment) => {
+                    //TODO add every block in the segment
+                    for (_, block) in &segment.cached_blocks {
+                        self.add_block(block);
+                    }
+                }
+                Type::BlockId(txn_id, seg_id, block_num) => {
+                    //TODO get the block from the cache and add it
                     todo!();
                 }
-                Type::LocalBlock(block) => {
+                Type::Block(block) => {
                     let mut iter = block.iter();
 
                     /* Get the first row in this block; if there isn't one, skip the block entirely.
@@ -110,7 +155,7 @@ impl<'txn> Iterator for Scan<'txn> {
         /* Find the row in the current live set with the lowest point; if the lowest is equal to the
            next queued thing, then we need to dequeue at least one thing. */
         for item in &self.live {
-            if current.is_none() || compare_points(2, &item.current.as_ref().unwrap(), &current.as_ref().unwrap()).is_lt() {
+            if current.is_none() || compare_points(self.num_dims, &item.current.as_ref().unwrap(), &current.as_ref().unwrap()).is_lt() {
                 need_to_deqeue = false;
                 current = item.current.clone();
             }
@@ -128,7 +173,7 @@ impl<'txn> Iterator for Scan<'txn> {
         let mut best_txn_id = 0;
         let mut best_row: Option<Vec<Datum>> = None;
         for item in self.live.iter_mut() {
-            if compare_points(2, &item.current.as_ref().unwrap(), &current.as_ref().unwrap()).is_eq() {
+            if compare_points(self.num_dims, &item.current.as_ref().unwrap(), &current.as_ref().unwrap()).is_eq() {
                 if item.txn_id > best_txn_id {
                     best_txn_id = item.txn_id;
                     best_row = Some(item.current.as_ref().unwrap().clone());
@@ -138,11 +183,10 @@ impl<'txn> Iterator for Scan<'txn> {
         }
 
         /* Clean up the live set. */
+        let old_live_count = self.live.len();
         self.live.retain(|x| x.current.is_some());
 
-        let rv = best_row.map(|x| QueryRow { txn_id: best_txn_id, values_array: x });
-        println!("Return value {:?}", rv);
-        rv
+        best_row.map(|x| QueryRow { txn_id: best_txn_id, values_array: x })
     }
 }
 
@@ -162,7 +206,7 @@ impl<'txn> PartialOrd<Self> for QueuedItem<'txn> {
 
 impl<'txn> Ord for QueuedItem<'txn> {
     fn cmp(&self, other: &Self) -> Ordering {
-        Datum::cmp(&self.start_point[0], &other.start_point[0]).reverse()
+        compare_points(self.start_point.len(), &self.start_point, &other.start_point).reverse()
     }
 }
 
@@ -170,34 +214,32 @@ impl<'txn> Ord for QueuedItem<'txn> {
 mod block_sorter_tests {
     use crate::block::Block;
     use crate::scan::{Scan, QueuedItem};
-    use crate::scan::Type::LocalBlock;
+    use crate::scan::Type::Block;
 
     #[test]
     fn empty_block_sorter() {
-        let mut bs = Scan::new(5);
+        let mut bs = Scan::new(2, 5);
 
         assert!(&bs.next().is_none());
     }
 
     #[test]
     fn one_empty_local_block() {
-        let mut bs = Scan::new(5);
+        let mut bs = Scan::new(2, 5);
         let mut b = Block::new(2);
+        bs.add_block(&b);
 
         assert!(&bs.next().is_none());
     }
 
     #[test]
     fn one_local_block() {
-        let mut bs = Scan::new(5);
+        let mut bs = Scan::new(2, 5);
 
         let mut b = Block::new(2);
         b.add_row(&[7, 4, 99]);
         b.add_row(&[9, 0, 101]);
-        bs.add(QueuedItem {
-            start_point: vec![7, 4],
-            item_type: LocalBlock(&b)
-        });
+        bs.add_block(&b);
 
         let r = bs.next();
         assert!(r.is_some());
@@ -220,21 +262,15 @@ mod block_sorter_tests {
 
     #[test]
     fn two_local_blocks() {
-        let mut bs = Scan::new(5);
+        let mut bs = Scan::new(2, 5);
 
         let mut b = Block::new(2);
         b.add_row(&[7, 4, 99]);
-        bs.add(QueuedItem {
-            start_point: vec![7, 4],
-            item_type: LocalBlock(&b)
-        });
+        bs.add_block(&b);
 
         let mut b = Block::new(2);
         b.add_row(&[9, 0, 101]);
-        bs.add(QueuedItem {
-            start_point: vec![9, 0],
-            item_type: LocalBlock(&b)
-        });
+        bs.add_block(&b);
 
         let r = bs.next();
         assert!(r.is_some());
