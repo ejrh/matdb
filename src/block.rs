@@ -225,7 +225,8 @@ impl Block {
     }
 
     pub(crate) fn get_start_point(&self) -> Option<Vec<Datum>> {
-        self.iter().next()
+        let num_dims = self.dimension_values.len();
+        self.iter().next().map(|vals| vals[0..num_dims].to_vec())
     }
 }
 

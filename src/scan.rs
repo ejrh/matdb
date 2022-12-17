@@ -75,7 +75,6 @@ impl<'txn> Scan<'txn> {
     }
 
     pub(crate) fn add_segment(&mut self, segment: &'txn Segment) {
-        let start_point = Some(vec![0, 0]);  //TODO should know the segment coords
         let start_point = segment.cached_blocks.values().flat_map(|x| x.get_start_point()).min();
         if start_point.is_none() {
             return;
@@ -183,7 +182,6 @@ impl<'txn> Iterator for Scan<'txn> {
         }
 
         /* Clean up the live set. */
-        let old_live_count = self.live.len();
         self.live.retain(|x| x.current.is_some());
 
         best_row.map(|x| QueryRow { txn_id: best_txn_id, values_array: x })
