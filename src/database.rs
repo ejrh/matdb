@@ -1,3 +1,4 @@
+use std::collections::{HashSet};
 use std::path::{Path, PathBuf};
 
 use log::{debug, info};
@@ -13,11 +14,13 @@ pub struct Database {
     pub path: PathBuf,
     pub schema: Schema,
     pub next_transaction_id: TransactionId,
+    pub committed_segments: HashSet<SegmentId>,
     pub cached_segments: Cache<SegmentId, Segment>
 }
 
 struct ScanResult {
-    pub next_transaction_id: TransactionId
+    next_transaction_id: TransactionId,
+    committed_segments: HashSet<SegmentId>
 }
 
 impl Database {
@@ -32,6 +35,7 @@ impl Database {
             path: path.to_path_buf(),
             schema,
             next_transaction_id: 1,
+            committed_segments: HashSet::new(),
             cached_segments: Cache::new(),
         })
     }
@@ -40,17 +44,21 @@ impl Database {
         let schema = Schema::load(path)?;
         let scan = scan_files(path)?;
         info!("Opened database in {:?}", path);
+        debug!("Next transaction is {:?}, number of committed segments is {:?}",
+            scan.next_transaction_id, scan.committed_segments.len());
         Ok(Database {
             path: path.to_path_buf(),
             schema,
             next_transaction_id: scan.next_transaction_id,
+            committed_segments: scan.committed_segments,
             cached_segments: Cache::new(),
         })
     }
 
     pub fn new_transaction<'db>(&'db mut self) -> Result<Transaction<'db>, Error> {
-        info!("Created transaction with horizon < {:?}", self.next_transaction_id);
-        Ok(Transaction::new(self))
+        let horizon = self.next_transaction_id;
+        info!("Created transaction with horizon < {:?}", horizon);
+        Ok(Transaction::new(self, horizon))
     }
 
     pub(crate) fn get_next_transaction_id(&mut self) -> TransactionId {
@@ -60,25 +68,36 @@ impl Database {
         txn_id
     }
 
-    pub(crate) fn get_committed_segments(&self) -> Vec<SegmentId> {
-        let mut segments = Vec::new();
+    pub(crate) fn add_committed_segment(&mut self, seg_id: SegmentId) {
+        self.committed_segments.insert(seg_id);
+    }
 
+    pub(crate) fn get_visible_committed_segments(&self, horizon: TransactionId) -> Vec<SegmentId> {
+        let mut segments = Vec::new();
+        segments.extend(self.committed_segments.iter().filter(|&seg| seg.0 < horizon));
         segments
     }
 }
 
 fn scan_files(database_path: &Path) -> Result<ScanResult, Error> {
-    let mut max_seen_id = 0;
+    let mut max_seen_txn_id = 0;
+    let mut known_segments = HashSet::new();
     for entry in std::fs::read_dir(database_path)? {
         let entry = entry.unwrap();
-        if let Some((txn_id, _, _)) = decode_segment_path(&entry.path()) {
-            if txn_id > max_seen_id {
-                max_seen_id = txn_id;
+        if let Some((txn_id, seg_num, _)) = decode_segment_path(&entry.path()) {
+            if txn_id > max_seen_txn_id {
+                max_seen_txn_id = txn_id;
             }
+
+            let seg_id = (txn_id, seg_num);
+            known_segments.insert(seg_id);
         };
     }
 
+    //TODO any transaction with no segment 0 didn't commit fully, so ignore those segments
+
     Ok(ScanResult {
-        next_transaction_id: max_seen_id + 1,
+        next_transaction_id: max_seen_txn_id + 1,
+        committed_segments: known_segments
     })
 }

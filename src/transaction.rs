@@ -10,24 +10,26 @@ use crate::segment::Segment;
 
 pub struct Transaction<'db> {
     pub(crate) id: Option<TransactionId>,
+    pub(crate) horizon: TransactionId,
     pub(crate) database: &'db mut Database,
-    pub(crate) blocks: HashMap<BlockKey, Block>,
-    pub(crate) segments: Vec<Segment>
+    pub(crate) unsaved_blocks: HashMap<BlockKey, Block>,
+    pub(crate) uncommitted_segments: Vec<Segment>
 }
 
 impl<'db> Transaction<'db> {
-    pub fn new(database: &'db mut Database) -> Transaction {
+    pub fn new(database: &'db mut Database, horizon: TransactionId) -> Transaction {
         Transaction {
             id: None,
+            horizon,
             database,
-            blocks: Default::default(),
-            segments: Vec::new()
+            unsaved_blocks: Default::default(),
+            uncommitted_segments: Vec::new()
         }
     }
 
     pub fn add_row(&mut self, values: &[Datum]) {
         let key = self.database.schema.get_chunk_key(values);
-        let block = self.blocks.entry(key).or_insert_with(|| Block::new(self.database.schema.dimensions.len()));
+        let block = self.unsaved_blocks.entry(key).or_insert_with(|| Block::new(self.database.schema.dimensions.len()));
         block.add_row(values);
     }
 
@@ -38,7 +40,7 @@ impl<'db> Transaction<'db> {
      * Consumes the Transaction, because you can't use it for anything else after this.
      */
     pub fn rollback(mut self) {
-        self.blocks.clear();
+        self.unsaved_blocks.clear();
         self.rollback_segments();
     }
 
@@ -57,13 +59,13 @@ impl<'db> Transaction<'db> {
     pub fn query(&'db self) -> Scan<'db> {
         let num_dims = self.database.schema.dimensions.len();
         let mut scan = Scan::new(num_dims, self.id.unwrap_or(0));
-        for seg_id in self.database.get_committed_segments() {
+        for seg_id in self.database.get_visible_committed_segments(self.horizon) {
             scan.add_segment_id(seg_id);
         }
-        for seg in &self.segments {
+        for seg in &self.uncommitted_segments {
             scan.add_segment(seg);
         }
-        for (_, block) in &self.blocks {
+        for (_, block) in &self.unsaved_blocks {
             scan.add_block(block);
         }
         scan
@@ -73,13 +75,13 @@ impl<'db> Transaction<'db> {
      * Create a new segment and save all remaining blocks to into.
      */
     pub fn flush(&mut self) -> Result<(), Error> {
-        if self.blocks.is_empty() { return Ok(()); }
+        if self.unsaved_blocks.is_empty() { return Ok(()); }
 
         let txn_id= self.get_transaction_id();
-        let seg_num = self.segments.len() as SegmentNum;
+        let seg_num = self.uncommitted_segments.len() as SegmentNum;
 
         /* Create a new segment and save all remaining blocks to into. */
-        let moved_blocks = std::mem::take(&mut self.blocks);
+        let moved_blocks = std::mem::take(&mut self.unsaved_blocks);
 
         let seg_id = (txn_id, seg_num);
         let new_segment = Segment::create(
@@ -87,7 +89,7 @@ impl<'db> Transaction<'db> {
             seg_id, moved_blocks
         )?;
 
-        self.segments.push(new_segment);
+        self.uncommitted_segments.push(new_segment);
         Ok(())
     }
 
@@ -98,10 +100,11 @@ impl<'db> Transaction<'db> {
      * until segment 1 is visible.
      */
     fn commit_segments(&mut self) -> Result<(), Error>{
-        while !self.segments.is_empty() {
-            let segment = self.segments.pop();
+        while !self.uncommitted_segments.is_empty() {
+            let segment = self.uncommitted_segments.pop();
             let mut segment = segment.unwrap();
             segment.make_visible(&self.database.path)?;
+            self.database.add_committed_segment(segment.id);
             debug!("Made segment visible {:?}", segment.path);
         }
         Ok(())
@@ -111,7 +114,7 @@ impl<'db> Transaction<'db> {
      * Delete any temporary segment files.
      */
     fn rollback_segments(&mut self) {
-        let moved_segments = std::mem::take(&mut self.segments);
+        let moved_segments = std::mem::take(&mut self.uncommitted_segments);
         for segment in moved_segments {
             let path = segment.path.clone();
             segment.delete().unwrap();
@@ -128,17 +131,11 @@ impl<'db> Transaction<'db> {
             id
         }
     }
-
-    pub(crate) fn get_visible_segments(&self) -> Vec<SegmentId> {
-        let segments = self.database.get_committed_segments();
-        //TODO add uncommitted segments
-        segments
-    }
 }
 
 impl<'db> Drop for Transaction<'db> {
     fn drop(&mut self) {
-        self.blocks.clear();
+        self.unsaved_blocks.clear();
         self.rollback_segments();
     }
 }
