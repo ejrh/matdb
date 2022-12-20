@@ -16,7 +16,7 @@ mod storage;
 mod transaction;
 
 pub use crate::database::Database;
-pub use crate::schema::{Dimension, Schema};
+pub use crate::schema::{Dimension, Value, Schema};
 pub use crate::transaction::Transaction;
 
 #[derive(Debug)]

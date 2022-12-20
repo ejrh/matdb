@@ -9,7 +9,7 @@ use std::time::Instant;
 use chrono::prelude::*;
 use serde::{Serialize, Deserialize};
 
-use matdb::{Datum, Dimension, Transaction, Value};
+use matdb::{Datum, Dimension, Value, Schema, Transaction};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Sensor {
@@ -169,7 +169,7 @@ fn main() {
     sensors.load().ok();
 
     /* Make a database */
-    let mut matdb = matdb::Database::create(matdb::Schema {
+    let mut matdb = matdb::Database::create(Schema {
         dimensions: vec![
             Dimension { name: String::from("time"), chunk_size: 1000000 },
             Dimension { name: String::from("sensor_id"), chunk_size: 100 },

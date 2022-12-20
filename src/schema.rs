@@ -4,13 +4,18 @@ use std::path::Path;
 
 use serde::{Serialize, Deserialize};
 
-use crate::{BlockKey, Datum, Error, Value};
+use crate::{BlockKey, Datum, Error};
 use crate::storage::SCHEMA_FILENAME;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Dimension {
     pub name: String,
     pub chunk_size: usize
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Value {
+    pub name: String
 }
 
 #[derive(Serialize, Deserialize, Debug)]
