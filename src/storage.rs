@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
-use crate::{SegmentId, TransactionId};
+use crate::{SegmentId, SegmentNum, TransactionId};
 
 const TAG_PREFIX: &[u8] = "MD:".as_bytes();
 const TAG_PREFIX_LENGTH: usize = TAG_PREFIX.len();
@@ -68,28 +68,47 @@ pub fn write_tag(file: &mut File, tag: Tag) -> std::io::Result<()> {
 
 pub fn get_segment_path(
     database_path: &Path,
-    txn_id: TransactionId,
     seg_id: SegmentId,
     visible: bool
 ) -> PathBuf {
     let segment_filename = if visible {
-        format!("{:08x}.{:08x}", txn_id, seg_id)
+        format!("{:08x}.{:08x}", seg_id.0, seg_id.1)
     } else {
-        format!("{:08x}.{:08x}.tmp", txn_id, seg_id)
+        format!("{:08x}.{:08x}.tmp", seg_id.0, seg_id.1)
     };
     database_path.join(segment_filename)
 }
 
-pub fn decode_segment_path(path: &Path) -> Option<(TransactionId, SegmentId, bool)> {
+pub fn decode_segment_path(path: &Path) -> Option<(TransactionId, SegmentNum, bool)> {
     let filename = path.file_name()?.to_str()?;
     let mut parts = filename.split('.');
     let txn_id: TransactionId = TransactionId::from_str_radix(parts.next()?, 16).ok()?;
-    let seg_id: SegmentId = SegmentId::from_str_radix(parts.next()?, 16).ok()?;
+    let seg_num: SegmentNum = SegmentNum::from_str_radix(parts.next()?, 16).ok()?;
     let tail = parts.next();
     let committed = match tail {
-        None => false,
-            Some("hello") => true,
+        None => true,
+        Some("tmp") => false,
         _ => { return None; }
     };
-    Some((txn_id, seg_id, committed))
+    Some((txn_id, seg_num, committed))
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn decode() {
+        let (txn_id, seg_num, committed) = decode_segment_path(Path::new("/a long path/of.some.kind/000A0000.0001")).unwrap();
+        assert_eq!(txn_id, 655360);
+        assert_eq!(seg_num, 1);
+        assert!(committed);
+
+        let (txn_id, seg_num, committed) = decode_segment_path(Path::new("10000000.FFFE.tmp")).unwrap();
+        assert_eq!(txn_id, 268435456);
+        assert_eq!(seg_num, 65534);
+        assert!(!committed);
+
+        assert!(decode_segment_path(Path::new("bogusfilename")).is_none());
+    }
 }

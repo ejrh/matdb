@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use log::{debug, info};
 
-use crate::{BlockKey, Datum, Error, SegmentId, TransactionId};
+use crate::{BlockKey, Datum, Error, SegmentId, SegmentNum, TransactionId};
 use crate::block::Block;
 use crate::database::Database;
 use crate::scan::Scan;
@@ -57,8 +57,8 @@ impl<'db> Transaction<'db> {
     pub fn query(&'db self) -> Scan<'db> {
         let num_dims = self.database.schema.dimensions.len();
         let mut scan = Scan::new(num_dims, self.id.unwrap_or(0));
-        for (txn_id, seg_id) in self.database.get_committed_segments() {
-            scan.add_segment_id(txn_id, seg_id);
+        for seg_id in self.database.get_committed_segments() {
+            scan.add_segment_id(seg_id);
         }
         for seg in &self.segments {
             scan.add_segment(seg);
@@ -76,14 +76,15 @@ impl<'db> Transaction<'db> {
         if self.blocks.is_empty() { return Ok(()); }
 
         let txn_id= self.get_transaction_id();
-        let seg_id = self.segments.len() as SegmentId;
+        let seg_num = self.segments.len() as SegmentNum;
 
         /* Create a new segment and save all remaining blocks to into. */
         let moved_blocks = std::mem::take(&mut self.blocks);
 
+        let seg_id = (txn_id, seg_num);
         let new_segment = Segment::create(
             self.database.path.as_path(),
-            txn_id, seg_id, moved_blocks
+            seg_id, moved_blocks
         )?;
 
         self.segments.push(new_segment);
@@ -128,9 +129,9 @@ impl<'db> Transaction<'db> {
         }
     }
 
-    pub(crate) fn get_visible_segments(&self) -> Vec<(TransactionId, SegmentId)> {
+    pub(crate) fn get_visible_segments(&self) -> Vec<SegmentId> {
         let segments = self.database.get_committed_segments();
-        //segments.extend(self.segments.iter().map(|s|))
+        //TODO add uncommitted segments
         segments
     }
 }

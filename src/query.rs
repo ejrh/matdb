@@ -4,7 +4,7 @@ use std::ops::Index;
 use std::vec;
 
 use crate::block::{Block, BlockIter};
-use crate::{BlockKey, Datum, SegmentId, Transaction, TransactionId};
+use crate::{BlockKey, Datum, Transaction, TransactionId};
 use crate::segment::Segment;
 
 #[derive(Clone)]

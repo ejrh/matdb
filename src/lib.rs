@@ -29,13 +29,11 @@ pub enum Error {
 pub type Datum = usize;
 
 pub type TransactionId = u32;
-pub type SegmentId = u16;
+pub type SegmentNum = u16;
 pub type BlockNum = u16;
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Value {
-    pub name: String
-}
+pub type SegmentId = (TransactionId, SegmentNum);
+pub type BlockId = (TransactionId, SegmentNum, BlockNum);
 
 pub struct BlockKey {
     key_values : Vec<Datum>

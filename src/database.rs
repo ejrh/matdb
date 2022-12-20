@@ -13,7 +13,7 @@ pub struct Database {
     pub path: PathBuf,
     pub schema: Schema,
     pub next_transaction_id: TransactionId,
-    pub cached_segments: Cache<(TransactionId, SegmentId), Segment>
+    pub cached_segments: Cache<SegmentId, Segment>
 }
 
 struct ScanResult {
@@ -60,7 +60,7 @@ impl Database {
         txn_id
     }
 
-    pub(crate) fn get_committed_segments(&self) -> Vec<(TransactionId, SegmentId)> {
+    pub(crate) fn get_committed_segments(&self) -> Vec<SegmentId> {
         let mut segments = Vec::new();
 
         segments

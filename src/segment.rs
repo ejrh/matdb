@@ -9,11 +9,10 @@ use zstd::zstd_safe;
 use crate::block::Block;
 use crate::storage::{get_segment_path, read_tag, skip_to_next_tag, write_tag};
 use crate::storage::Tag::{BlockTag, EndTag};
-use crate::{BlockKey, Datum, Error, SegmentId, TransactionId};
+use crate::{BlockKey, Datum, Error, SegmentId};
 use crate::schema::Schema;
 
 pub struct Segment {
-    pub txn_id: TransactionId,
     pub id: SegmentId,
     pub path: PathBuf,
     pub(crate) cached_blocks: HashMap<BlockKey, Block>
@@ -25,14 +24,12 @@ impl Segment {
      */
     pub(crate) fn create(
         database_path: &Path,
-        txn_id: TransactionId,
         seg_id: SegmentId,
         blocks: HashMap<BlockKey, Block>
     ) -> Result<Segment, Error> {
-        let path = get_segment_path(database_path, txn_id, seg_id, false);
+        let path = get_segment_path(database_path, seg_id, false);
 
         let mut segment = Segment {
-            txn_id,
             id: seg_id,
             path,
             cached_blocks: blocks
@@ -100,7 +97,7 @@ impl Segment {
     }
 
     pub(crate) fn make_visible(&mut self, database_path: &Path) -> Result<(), Error> {
-        let new_path = get_segment_path(database_path, self.txn_id, self.id, true);
+        let new_path = get_segment_path(database_path,self.id, true);
         std::fs::rename(self.path.as_path(), new_path.as_path())?;
         self.path = new_path;
         Ok(())

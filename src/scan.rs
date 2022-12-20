@@ -5,14 +5,14 @@ use std::mem::take;
 use std::ptr::replace;
 
 use crate::block::{Block, BlockIter};
-use crate::{BlockNum, compare_points, Datum, SegmentId, Transaction, TransactionId};
+use crate::{BlockId, BlockNum, compare_points, Datum, SegmentId, Transaction, TransactionId};
 use crate::query::QueryRow;
 use crate::segment::Segment;
 
 pub(crate) enum Type<'txn> {
-    SegmentId(TransactionId, SegmentId),
+    SegmentId(SegmentId),
     Segment(&'txn Segment),
-    BlockId(TransactionId, SegmentId, BlockNum),
+    BlockId(BlockId),
     Block(&'txn Block),
 }
 
@@ -62,7 +62,7 @@ impl<'txn> Scan<'txn> {
         }
     }
 
-    pub(crate) fn add_segment_id(&mut self, txn_id: TransactionId, seg_id: SegmentId) {
+    pub(crate) fn add_segment_id(&mut self, seg_id: SegmentId) {
         let start_point = Some(vec![0, 0]);  //TODO should know the segment coords
         if start_point.is_none() {
             return;
@@ -70,7 +70,7 @@ impl<'txn> Scan<'txn> {
         let start_point = start_point.unwrap();
         self.queue.push(QueuedItem {
             start_point,
-            item_type: Type::SegmentId(txn_id, seg_id)
+            item_type: Type::SegmentId(seg_id)
         })
     }
 
@@ -108,7 +108,7 @@ impl<'txn> Scan<'txn> {
             /* Otherwise pop at least one queued thing. */
             let queue_item = self.queue.pop().unwrap();
             match queue_item.item_type {
-                Type::SegmentId(txn_id, seg_id) => {
+                Type::SegmentId(seg_id) => {
                     //TODO get the segment from the cache and add it
                     todo!();
                 }
@@ -118,7 +118,7 @@ impl<'txn> Scan<'txn> {
                         self.add_block(block);
                     }
                 }
-                Type::BlockId(txn_id, seg_id, block_num) => {
+                Type::BlockId(block_id) => {
                     //TODO get the block from the cache and add it
                     todo!();
                 }
