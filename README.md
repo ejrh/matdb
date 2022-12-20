@@ -12,7 +12,11 @@ In theory, this should make it suitable for storing timeseries data.
 Current State
 ---
 
-Puts numbers in memory and reads them out again.
+**MatDB is a work in progress and not ready for production use!**
+
+Puts numbers in memory and reads them out again, *if* they're in the same transaction.
+
+Queries do not currently load needed data from disk.
 
 Saves data to disk and loads it again.
 

@@ -4,21 +4,22 @@ use std::time::Instant;
 use matdb::{Database, Datum, Dimension, Schema, Transaction, Value};
 
 fn create_database() -> Database {
-    let database_path = Path::new("testdb");
+    let mut database_path = std::env::temp_dir();
+    database_path.push(Path::new("testdb"));
 
     let matdb;
     if database_path.exists() {
-        matdb = Database::open(database_path).unwrap();
+        matdb = Database::open(database_path.as_path()).unwrap();
     } else {
         matdb = Database::create(Schema {
             dimensions: vec![
-                Dimension { name: String::from("time"), chunk_size: 500 },
-                Dimension { name: String::from("sensor_id"), chunk_size: 100 },
+                Dimension { name: String::from("time"), chunk_size: 50 },
+                Dimension { name: String::from("sensor_id"), chunk_size: 10 },
             ],
             values: vec![
                 Value { name: String::from("value") }
             ]
-        }, database_path).unwrap();
+        }, database_path.as_path()).unwrap();
     }
 
     matdb
@@ -27,8 +28,8 @@ fn create_database() -> Database {
 fn insert_data(txn: &mut Transaction) {
     let mut count = 0;
     let now = Instant::now();
-    for i in 0..1000 {
-        for j in 0..1000 {
+    for i in 0..100 {
+        for j in 0..100 {
             txn.add_row(&[i, j, i*1000 + j]);
             count += 1;
         }
@@ -47,8 +48,10 @@ fn query_data(txn: &Transaction) {
         count += 1;
     }
     println!("Queried {} rows in {:?}", count, now.elapsed());
+    assert_eq!(count, 10000);
 }
 
+#[test]
 fn main() {
     stderrlog::new()
         .verbosity(3)
