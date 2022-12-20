@@ -3,8 +3,6 @@ use std::fmt::{Debug};
 use std::hash::{Hash, Hasher};
 use std::iter::zip;
 
-use serde::{Serialize, Deserialize};
-
 mod block;
 mod cache;
 mod database;
@@ -70,7 +68,6 @@ impl Hash for BlockKey {
     }
 }
 
-pub(crate) fn compare_points(num_dims: usize, point1: &Vec<Datum>, point2: &Vec<Datum>) -> Ordering
-{
+pub(crate) fn compare_points(num_dims: usize, point1: &[Datum], point2: &[Datum]) -> Ordering {
     Ord::cmp(&point1[0..num_dims], &point2[0..num_dims])
 }

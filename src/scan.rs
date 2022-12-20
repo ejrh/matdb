@@ -1,11 +1,8 @@
 use std::cmp::Ordering;
 use std::collections::binary_heap::BinaryHeap;
-use std::iter::Peekable;
-use std::mem::take;
-use std::ptr::replace;
 
 use crate::block::{Block, BlockIter};
-use crate::{BlockId, BlockNum, compare_points, Datum, SegmentId, Transaction, TransactionId};
+use crate::{BlockId, compare_points, Datum, SegmentId, TransactionId};
 use crate::query::QueryRow;
 use crate::segment::Segment;
 
@@ -82,7 +79,7 @@ impl<'txn> Scan<'txn> {
         let start_point = start_point.unwrap();
         self.queue.push(QueuedItem {
             start_point,
-            item_type: Type::Segment(&segment)
+            item_type: Type::Segment(segment)
         });
     }
 
@@ -94,31 +91,31 @@ impl<'txn> Scan<'txn> {
         let start_point = start_point.unwrap();
         self.queue.push(QueuedItem {
             start_point,
-            item_type: Type::Block(&block)
+            item_type: Type::Block(block)
         });
     }
 
     fn check_queue(&mut self, current: &Vec<Datum>) {
         while let Some(next_queue_item) = self.queue.peek() {
             /* If we already have one and the first queued thing starts after it, do nothing. */
-            if compare_points(self.num_dims,&next_queue_item.start_point, &current).is_gt() {
+            if compare_points(self.num_dims,&next_queue_item.start_point, current).is_gt() {
                 return;
             }
 
             /* Otherwise pop at least one queued thing. */
             let queue_item = self.queue.pop().unwrap();
             match queue_item.item_type {
-                Type::SegmentId(seg_id) => {
+                Type::SegmentId(_seg_id) => {
                     //TODO get the segment from the cache and add it
                     todo!();
                 }
                 Type::Segment(segment) => {
-                    //TODO add every block in the segment
-                    for (_, block) in &segment.cached_blocks {
+                    //TODO add every block in the segment, not just the cached ones
+                    for block in segment.cached_blocks.values() {
                         self.add_block(block);
                     }
                 }
-                Type::BlockId(block_id) => {
+                Type::BlockId(_block_id) => {
                     //TODO get the block from the cache and add it
                     todo!();
                 }
@@ -135,7 +132,7 @@ impl<'txn> Scan<'txn> {
 
                     self.live.push(LiveItem {
                         iter,
-                        current: current,
+                        current,
                         txn_id: self.this_txn_id
                     });
                 }
@@ -154,30 +151,27 @@ impl<'txn> Iterator for Scan<'txn> {
         /* Find the row in the current live set with the lowest point; if the lowest is equal to the
            next queued thing, then we need to dequeue at least one thing. */
         for item in &self.live {
-            if current.is_none() || compare_points(self.num_dims, &item.current.as_ref().unwrap(), &current.as_ref().unwrap()).is_lt() {
+            if current.is_none() || compare_points(self.num_dims, item.current.as_ref().unwrap(), current.as_ref().unwrap()).is_lt() {
                 need_to_deqeue = false;
                 current = item.current.clone();
             }
         }
 
-        if current.is_none() {
-            return None;
-        }
+        let current_point = current.as_ref()?;
 
         if need_to_deqeue {
-            self.check_queue(&current.as_ref().unwrap());
+            self.check_queue(current_point);
         }
 
         /* Now check everything that's live for the best thing to return. */
         let mut best_txn_id = 0;
         let mut best_row: Option<Vec<Datum>> = None;
         for item in self.live.iter_mut() {
-            if compare_points(self.num_dims, &item.current.as_ref().unwrap(), &current.as_ref().unwrap()).is_eq() {
-                if item.txn_id > best_txn_id {
-                    best_txn_id = item.txn_id;
-                    best_row = Some(item.current.as_ref().unwrap().clone());
-                    item.current = item.iter.next();
-                }
+            let item_point = item.current.as_ref().unwrap();
+            if compare_points(self.num_dims, item_point, current_point).is_eq() && item.txn_id > best_txn_id {
+                best_txn_id = item.txn_id;
+                best_row = Some(item.current.as_ref().unwrap().clone());
+                item.current = item.iter.next();
             }
         }
 
@@ -210,8 +204,7 @@ impl<'txn> Ord for QueuedItem<'txn> {
 
 #[cfg(test)]
 mod block_sorter_tests {
-    use crate::block::Block;
-    use crate::scan::{Scan, QueuedItem};
+    use super::*;
 
     #[test]
     fn empty_block_sorter() {
@@ -223,7 +216,7 @@ mod block_sorter_tests {
     #[test]
     fn one_empty_local_block() {
         let mut bs = Scan::new(2, 5);
-        let mut b = Block::new(2);
+        let b = Block::new(2);
         bs.add_block(&b);
 
         assert!(&bs.next().is_none());

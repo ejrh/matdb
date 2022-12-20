@@ -136,7 +136,7 @@ impl Block {
         }
     }
 
-    pub(crate) fn iter<'buf>(&'buf self) -> BlockIter {
+    pub(crate) fn iter(&self) -> BlockIter {
         BlockIter {
             block: self,
             indexes: vec![0; self.dimension_values.len()],
@@ -464,8 +464,7 @@ mod slice_insert_tests {
 
 #[cfg(test)]
 mod iterate_tests {
-    use crate::block::Block;
-    use crate::Datum;
+    use super::*;
 
     #[test]
     fn empty_block() {

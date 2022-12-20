@@ -9,7 +9,7 @@ use zstd::zstd_safe;
 use crate::block::Block;
 use crate::storage::{get_segment_path, read_tag, skip_to_next_tag, write_tag};
 use crate::storage::Tag::{BlockTag, EndTag};
-use crate::{BlockKey, Datum, Error, SegmentId};
+use crate::{BlockKey, Error, SegmentId};
 use crate::schema::Schema;
 
 pub struct Segment {

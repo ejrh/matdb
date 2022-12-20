@@ -1,11 +1,7 @@
-use std::collections::{hash_map, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::ops::Index;
-use std::vec;
 
-use crate::block::{Block, BlockIter};
-use crate::{BlockKey, Datum, Transaction, TransactionId};
-use crate::segment::Segment;
+use crate::{Datum, TransactionId};
 
 #[derive(Clone)]
 pub struct QueryRow {

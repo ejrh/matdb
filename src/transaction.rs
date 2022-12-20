@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use log::{debug, info};
 
-use crate::{BlockKey, Datum, Error, SegmentId, SegmentNum, TransactionId};
+use crate::{BlockKey, Datum, Error, SegmentNum, TransactionId};
 use crate::block::Block;
 use crate::database::Database;
 use crate::scan::Scan;
@@ -65,7 +65,7 @@ impl<'db> Transaction<'db> {
         for seg in &self.uncommitted_segments {
             scan.add_segment(seg);
         }
-        for (_, block) in &self.unsaved_blocks {
+        for block in self.unsaved_blocks.values() {
             scan.add_block(block);
         }
         scan

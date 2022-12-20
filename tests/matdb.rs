@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use matdb::{Database, Datum, Dimension, Value, Schema, Transaction};
+use matdb::{Database, Dimension, Value, Schema, Transaction};
 
 fn create_database() -> Database {
     let mut database_path = std::env::temp_dir();

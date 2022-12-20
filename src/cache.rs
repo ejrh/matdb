@@ -193,7 +193,7 @@ mod cache_tests {
         let value2 = item2.get();
 
         assert_eq!(value, &42);
-        assert_eq!(value, &42);
+        assert_eq!(value2, &42);
 
         assert_eq!(cache.entries.get(&5).unwrap().pin_count, 2);
 
@@ -235,5 +235,7 @@ mod eviction_tests {
         assert_eq!(cache.evict(&5), false);
 
         assert_eq!(cache.entries.len(), 1);
+
+        drop(item);
     }
 }

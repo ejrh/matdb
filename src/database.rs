@@ -55,7 +55,7 @@ impl Database {
         })
     }
 
-    pub fn new_transaction<'db>(&'db mut self) -> Result<Transaction<'db>, Error> {
+    pub fn new_transaction(&mut self) -> Result<Transaction, Error> {
         let horizon = self.next_transaction_id;
         info!("Created transaction with horizon < {:?}", horizon);
         Ok(Transaction::new(self, horizon))

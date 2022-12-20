@@ -9,7 +9,7 @@ use std::time::Instant;
 use chrono::prelude::*;
 use serde::{Serialize, Deserialize};
 
-use matdb::{Datum, Dimension, Value, Schema, Transaction};
+use matdb::{Dimension, Value, Schema, Transaction};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Sensor {
