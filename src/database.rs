@@ -84,12 +84,18 @@ fn scan_files(database_path: &Path) -> Result<ScanResult, Error> {
     let mut known_segments = HashSet::new();
     for entry in std::fs::read_dir(database_path)? {
         let entry = entry.unwrap();
-        if let Some((txn_id, seg_num, _)) = decode_segment_path(&entry.path()) {
+        if let Some((txn_id, seg_num, committed)) = decode_segment_path(&entry.path()) {
+            let seg_id = (txn_id, seg_num);
             if txn_id > max_seen_txn_id {
                 max_seen_txn_id = txn_id;
             }
 
-            let seg_id = (txn_id, seg_num);
+            if !committed {
+                info!("Deleting uncommitted segment {:?}", seg_id);
+                std::fs::remove_file(&entry.path())?;
+                continue;
+            }
+
             known_segments.insert(seg_id);
         };
     }
