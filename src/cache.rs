@@ -1,40 +1,24 @@
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::rc::Rc;
+
+struct Entry<V> {
+    use_count: usize,
+    rc: Rc<V>
+}
 
 /**
- * A cache that tracks which items in it are currently being used.
+ * A cache that tracks which items in it have been used the most, and avoids
+ * evicting those ones.
  *
- * When an item is borrowed, its pin count is incremented.  A non-zero
- * pin count indicates that the item is currently in use, and should not be
- * evicted from the cache.
+ * Values are added and borrowed wrapped in Rc.
  */
 pub struct Cache<K, V> {
-    entries: HashMap<K, Box<CacheItem<V>>>
-}
-
-/**
- * The item inside the cache.
- */
-pub struct CacheItem<V> {
-    pin_count: u32,
-    use_count: u32,
-    value: V,
-}
-
-/**
- * A borrowed item, or rather a handle to it.
- *
- * The actual item can be got with the `get` method.
- *
- * When this is dropped (explicitly or implicitly), the pin count
- * on the corresponding item is decremented.
- */
-pub struct BorrowedCacheItem<V> {
-    item: *mut CacheItem<V>
+    entries: HashMap<K, Entry<V>>
 }
 
 impl<K, V> Cache<K, V>
-where K: Hash + Eq {
+where K: Hash + Eq, V: Sized {
     pub fn new() -> Cache<K, V> {
         Cache { entries: HashMap::new() }
     }
@@ -45,27 +29,14 @@ where K: Hash + Eq {
      * Both key and value are consumed by this function and will then belong
      * to the cache.
      */
-    pub fn add(&mut self, key: K, value: V) {
-        let item = CacheItem {
-            pin_count: 0,
-            use_count: 1,
-            value
-        };
-        self.entries.insert(key, Box::new(item));
+    pub fn add(&mut self, key: K, rc: Rc<V>) {
+        self.entries.insert(key, Entry { use_count: 1, rc });
     }
 
-    /**
-     * Borrow a item from the cache by key.  The result is `None` if
-     * there is nothing under that key in the cache, otherwise it is
-     * `Some(borrowed)` where `borrowed` is a handle to the item.
-     */
-    pub fn borrow(&mut self, key: &K) -> Option<BorrowedCacheItem<V>> {
-        let item = self.entries.get_mut(key)?.as_mut();
-        item.use_count += 1;
-        item.pin_count += 1;
-        Some(BorrowedCacheItem {
-            item
-        })
+    pub fn get(&mut self, key: &K) -> Option<Rc<V>> {
+        let mut entry = self.entries.get_mut(key)?;
+        entry.use_count += 1;
+        Some(entry.rc.clone())
     }
 
     /**
@@ -75,143 +46,125 @@ where K: Hash + Eq {
      */
     pub fn evict(&mut self, key: &K) -> bool {
         let item = self.entries.get(key);
+        let Some(entry) = item else { return false; };
 
-        if item.is_none() { return false; }
-
-        let item = item.unwrap();
-
-        if item.pin_count > 0 { return false; }
+        if Rc::strong_count(&entry.rc) > 1 { return false; }
 
         self.entries.remove(key);
         true
     }
 }
 
-impl<V> BorrowedCacheItem<V> {
-    pub fn get(&self) -> &V {
-        let item = unsafe { self.item.as_ref().expect("should point to an item") };
-        &(item.value)
-    }
-}
-
-impl<V> Drop for BorrowedCacheItem<V> {
-    fn drop(&mut self) {
-        let item = unsafe { self.item.as_mut().expect("should point to an item") };
-        item.pin_count -= 1;
-    }
-}
-
 #[cfg(test)]
 mod cache_tests {
-    use crate::cache::Cache;
+    use super::*;
 
     #[test]
     fn missing_key() {
         let mut cache: Cache<u32, u32> = Cache::new();
 
-        assert!(cache.borrow(&5).is_none());
+        assert!(cache.get(&5).is_none());
     }
 
     #[test]
     fn borrow_and_return() {
         let mut cache: Cache<u32, u32> = Cache::new();
-        cache.add(5, 42);
+        cache.add(5, Rc::new(42));
 
-        let item = cache.borrow(&5);
+        let item = cache.get(&5);
 
-        assert_eq!(cache.entries.get(&5).unwrap().pin_count, 1);
+        assert_eq!(Rc::strong_count(&cache.entries.get(&5).unwrap().rc), 2);
 
         drop(item);
 
-        assert_eq!(cache.entries.get(&5).unwrap().pin_count, 0);
+        assert_eq!(Rc::strong_count(&cache.entries.get(&5).unwrap().rc), 1);
     }
-
 
     #[test]
     fn borrow_and_use() {
         let mut cache: Cache<u32, u32> = Cache::new();
-        cache.add(5, 42);
+        cache.add(5, Rc::new(42));
 
-        let item = cache.borrow(&5);
+        let item = cache.get(&5);
 
         assert!(item.is_some());
 
-        let item = item.unwrap();
+        let rc = item.unwrap();
 
-        let value = item.get();
-        assert_eq!(value, &42);
+        let value = *rc;
+        assert_eq!(value, 42);
     }
 
     #[test]
     fn borrow_and_then_add_more() {
         let mut cache: Cache<u32, u32> = Cache::new();
-        cache.add(5, 42);
+        cache.add(5, Rc::new(42));
 
-        let item = cache.borrow(&5);
+        let item = cache.get(&5);
 
         for i in 100..1000 {
-            cache.add(i, i);
+            cache.add(i, Rc::new(i));
         }
 
-        let item = item.unwrap();
+        let rc = item.unwrap();
 
-        let value = item.get();
-        assert_eq!(value, &42);
+        let value = *rc;
+        assert_eq!(value, 42);
     }
 
     #[test]
     fn borrow_two() {
         let mut cache: Cache<u32, u32> = Cache::new();
-        cache.add(5, 42);
-        cache.add(7, 99);
+        cache.add(5, Rc::new(42));
+        cache.add(7, Rc::new(99));
 
-        let item = cache.borrow(&5);
-        let item2 = cache.borrow(&7);
+        let item = cache.get(&5);
+        let item2 = cache.get(&7);
 
-        let item = item.unwrap();
-        let item2 = item2.unwrap();
+        let rc = item.unwrap();
+        let rc2 = item2.unwrap();
 
-        let value = item.get();
-        let value2 = item2.get();
+        let value = *rc;
+        let value2 = *rc2;
 
-        assert_eq!(value, &42);
-        assert_eq!(value2, &99);
+        assert_eq!(value, 42);
+        assert_eq!(value2, 99);
     }
 
     #[test]
     fn borrow_same_one_twice() {
         let mut cache: Cache<u32, u32> = Cache::new();
-        cache.add(5, 42);
+        cache.add(5, Rc::new(42));
 
-        let item = cache.borrow(&5);
-        let item2 = cache.borrow(&5);
+        let item = cache.get(&5);
+        let item2 = cache.get(&5);
 
-        let item = item.unwrap();
-        let item2 = item2.unwrap();
+        let rc = item.unwrap();
+        let rc2 = item2.unwrap();
 
-        let value = item.get();
-        let value2 = item2.get();
+        let value = *rc;
+        let value2 = *rc2;
 
-        assert_eq!(value, &42);
-        assert_eq!(value2, &42);
+        assert_eq!(value, 42);
+        assert_eq!(value2, 42);
 
-        assert_eq!(cache.entries.get(&5).unwrap().pin_count, 2);
+        assert_eq!(Rc::strong_count(&cache.entries.get(&5).unwrap().rc), 3);
 
-        drop(item);
-        drop(item2);
+        drop(rc);
+        drop(rc2);
 
-        assert_eq!(cache.entries.get(&5).unwrap().pin_count, 0);
+        assert_eq!(Rc::strong_count(&cache.entries.get(&5).unwrap().rc), 1);
     }
 }
 
 #[cfg(test)]
 mod eviction_tests {
-    use crate::cache::Cache;
+    use super::*;
 
     #[test]
     fn evict_nothing_borrowed() {
         let mut cache: Cache<u32, u32> = Cache::new();
-        cache.add(5, 42);
+        cache.add(5, Rc::new(42));
 
         assert_eq!(cache.evict(&5), true);
 
@@ -228,14 +181,12 @@ mod eviction_tests {
     #[test]
     fn try_evict_something_borrowed() {
         let mut cache: Cache<u32, u32> = Cache::new();
-        cache.add(5, 42);
+        cache.add(5, Rc::new(42));
 
-        let item = cache.borrow(&5);
+        let item = cache.get(&5);
 
         assert_eq!(cache.evict(&5), false);
 
         assert_eq!(cache.entries.len(), 1);
-
-        drop(item);
     }
 }

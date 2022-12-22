@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use log::{debug, info};
 
@@ -13,7 +14,7 @@ pub struct Transaction<'db> {
     pub(crate) horizon: TransactionId,
     pub(crate) database: &'db mut Database,
     pub(crate) unsaved_blocks: HashMap<BlockKey, Block>,
-    pub(crate) uncommitted_segments: Vec<Segment>
+    pub(crate) uncommitted_segments: Vec<Rc<Segment>>
 }
 
 impl<'db> Transaction<'db> {
@@ -62,8 +63,8 @@ impl<'db> Transaction<'db> {
         for seg_id in self.database.get_visible_committed_segments(self.horizon) {
             scan.add_segment_id(seg_id);
         }
-        for seg in &self.uncommitted_segments {
-            scan.add_segment(seg);
+        for rc in &self.uncommitted_segments {
+            scan.add_segment(rc.clone());
         }
         for block in self.unsaved_blocks.values() {
             scan.add_block(block);
@@ -89,7 +90,9 @@ impl<'db> Transaction<'db> {
             seg_id, moved_blocks
         )?;
 
-        self.uncommitted_segments.push(new_segment);
+        let rc = Rc::new(new_segment);
+        self.uncommitted_segments.push(rc.clone());
+        //TODO tell database to cache the segment for us
         Ok(())
     }
 
@@ -101,8 +104,8 @@ impl<'db> Transaction<'db> {
      */
     fn commit_segments(&mut self) -> Result<(), Error>{
         while !self.uncommitted_segments.is_empty() {
-            let segment = self.uncommitted_segments.pop();
-            let mut segment = segment.unwrap();
+            let mut rc = self.uncommitted_segments.pop().unwrap();
+            let mut segment = unsafe { Rc::into_raw(rc).cast_mut().as_mut().unwrap() };
             segment.make_visible(&self.database.path)?;
             self.database.add_committed_segment(segment.id);
             debug!("Made segment visible {:?}", segment.path);
@@ -115,10 +118,12 @@ impl<'db> Transaction<'db> {
      */
     fn rollback_segments(&mut self) {
         let moved_segments = std::mem::take(&mut self.uncommitted_segments);
-        for segment in moved_segments {
+        for rc in moved_segments {
+            let mut segment = unsafe { Rc::into_raw(rc).cast_mut().as_mut().unwrap() };
             let path = segment.path.clone();
             segment.delete().unwrap();
             debug!("Deleted cancelled segment {:?}", path);
+            //TODO tell database to stop caching the segment
         }
     }
 

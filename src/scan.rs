@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::binary_heap::BinaryHeap;
+use std::rc::Rc;
 
 use crate::block::{Block, BlockIter};
 use crate::{BlockId, compare_points, Datum, SegmentId, TransactionId};
@@ -8,9 +9,10 @@ use crate::segment::Segment;
 
 pub(crate) enum Type<'txn> {
     SegmentId(SegmentId),
-    Segment(&'txn Segment),
+    Segment(Rc<Segment>),
     BlockId(BlockId),
     Block(&'txn Block),
+    SegmentBlock(Rc<Segment>, &'static Block)
 }
 
 pub(crate) struct QueuedItem<'txn> {
@@ -22,7 +24,8 @@ pub(crate) struct QueuedItem<'txn> {
 pub(crate) struct LiveItem<'txn> {
     iter: BlockIter<'txn>,
     current: Option<Vec<Datum>>,
-    txn_id: TransactionId
+    txn_id: TransactionId,
+    pin_rc: Option<Rc<Segment>>
 }
 
 /**
@@ -71,7 +74,7 @@ impl<'txn> Scan<'txn> {
         })
     }
 
-    pub(crate) fn add_segment(&mut self, segment: &'txn Segment) {
+    pub(crate) fn add_segment(&mut self, segment: Rc<Segment>) {
         let start_point = segment.cached_blocks.values().flat_map(|x| x.get_start_point()).min();
         if start_point.is_none() {
             return;
@@ -95,6 +98,18 @@ impl<'txn> Scan<'txn> {
         });
     }
 
+    pub(crate) fn add_segment_block(&mut self, rc: Rc<Segment>, block: &'static Block) {
+        let start_point = block.get_start_point();
+        if start_point.is_none() {
+            return;
+        }
+        let start_point = start_point.unwrap();
+        self.queue.push(QueuedItem {
+            start_point,
+            item_type: Type::SegmentBlock(rc, block)
+        });
+    }
+
     fn check_queue(&mut self, current: &Vec<Datum>) {
         while let Some(next_queue_item) = self.queue.peek() {
             /* If we already have one and the first queued thing starts after it, do nothing. */
@@ -109,10 +124,13 @@ impl<'txn> Scan<'txn> {
                     //TODO get the segment from the cache and add it
                     todo!();
                 }
-                Type::Segment(segment) => {
+                Type::Segment(rc) => {
                     //TODO add every block in the segment, not just the cached ones
+                    let segment = &*rc;
                     for block in segment.cached_blocks.values() {
-                        self.add_block(block);
+                        let pin_rc = rc.clone();
+                        let block = unsafe { std::mem::transmute::<&'_ Block, &'static Block>(block) };
+                        self.add_segment_block(pin_rc, block);
                     }
                 }
                 Type::BlockId(_block_id) => {
@@ -133,7 +151,26 @@ impl<'txn> Scan<'txn> {
                     self.live.push(LiveItem {
                         iter,
                         current,
-                        txn_id: self.this_txn_id
+                        txn_id: self.this_txn_id,
+                        pin_rc: None
+                    });
+                }
+                Type::SegmentBlock(rc, block) => {
+                    let mut iter = block.iter();
+
+                    /* Get the first row in this block; if there isn't one, skip the block entirely.
+                       Otherwise, set it as the next start point if necessary.
+                     */
+                    let current = iter.next();
+                    if current.is_none() {
+                        continue;
+                    }
+
+                    self.live.push(LiveItem {
+                        iter,
+                        current,
+                        txn_id: self.this_txn_id,
+                        pin_rc: Some(rc)
                     });
                 }
             }

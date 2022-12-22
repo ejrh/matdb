@@ -103,8 +103,8 @@ impl Segment {
         Ok(())
     }
 
-    pub(crate) fn delete(self) -> Result<(), Error> {
-        std::fs::remove_file(self.path)?;
+    pub(crate) fn delete(&self) -> Result<(), Error> {
+        std::fs::remove_file(&self.path)?;
         Ok(())
     }
 }
