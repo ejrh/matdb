@@ -1,10 +1,12 @@
 use std::collections::{HashSet};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use log::{debug, info};
+use log::{debug, error, info};
 
 use crate::{Error, SegmentId, TransactionId};
 use crate::cache::Cache;
+use crate::scan::ScanSource;
 use crate::schema::Schema;
 use crate::segment::Segment;
 use crate::storage::decode_segment_path;
@@ -77,6 +79,14 @@ impl Database {
         segments.extend(self.committed_segments.iter().filter(|&seg| seg.0 < horizon));
         segments
     }
+
+    pub(crate) fn get_scan_source<'db>(&'db self) -> Box<dyn ScanSource + 'db> {
+        Box::new(
+            DatabaseScanSource {
+                database: self,
+            }
+        )
+    }
 }
 
 fn scan_files(database_path: &Path) -> Result<ScanResult, Error> {
@@ -106,4 +116,42 @@ fn scan_files(database_path: &Path) -> Result<ScanResult, Error> {
         next_transaction_id: max_seen_txn_id + 1,
         committed_segments: known_segments
     })
+}
+
+struct DatabaseScanSource<'db> {
+    database: &'db Database
+}
+
+impl<'db> ScanSource for DatabaseScanSource<'db> {
+    fn get_segment(&self, seg_id: SegmentId) -> Option<Rc<Segment>> {
+        info!("Request for segment {:?}", (seg_id));
+        let mut_db = unsafe {
+            let const_ptr = self.database as *const Database;
+            let mut_ptr = const_ptr as *mut Database;
+            &mut *mut_ptr
+        };
+
+        /* Try get it from the cache and return it */
+        if let Some(rc) = mut_db.cached_segments.get(&seg_id) {
+            return Some(rc);
+        }
+
+        /* Otherwise, load it from disk, put it into the cache, and return it */
+        let new_segment = Segment::load(
+            self.database.path.as_path(),
+            seg_id, &self.database.schema
+        );
+        if let Err(err) = new_segment {
+            error!("Error loading segment {:?}", err);
+            return None;
+        }
+
+        let new_segment = new_segment.unwrap();
+
+        let rc = Rc::new(new_segment);
+
+        mut_db.cached_segments.add(seg_id, rc.clone());
+
+        Some(rc)
+    }
 }

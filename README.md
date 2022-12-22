@@ -14,11 +14,12 @@ Current State
 
 **MatDB is a work in progress and not ready for production use!**
 
-Puts numbers in memory and reads them out again, *if* they're in the same transaction.
+Opens transactions, allows data to be inserted, saves the data to disk temporarily,
+and permanently when the transaction is committed.
 
-Queries do not currently load needed data from disk.
-
-Saves data to disk and loads it again.
+Within a transaction, allows data to be queried.  Returns data that was committed
+at the time the transaction was opened, and data inserted within the transaction.
+Returns only the most recent copy of any given row matching a point.
 
 There is a test program called "sensor-log" that imports timeseries data from a text file.
 

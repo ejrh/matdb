@@ -29,12 +29,12 @@ fn insert_data(txn: &mut Transaction) {
     let mut count = 0;
     let now = Instant::now();
     for i in 0..100 {
+        if i % 10 == 0 {
+            txn.flush().unwrap();
+        }
         for j in 0..100 {
             txn.add_row(&[i, j, i*1000 + j]);
             count += 1;
-        }
-        if i % 100 == 0 {
-            txn.flush().unwrap();
         }
     }
     println!("Inserted {} rows in {:?}", count, now.elapsed());

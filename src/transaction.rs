@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use log::{debug, info};
+use log::{debug, info, trace};
 
 use crate::{BlockKey, Datum, Error, SegmentNum, TransactionId};
 use crate::block::Block;
@@ -58,15 +58,19 @@ impl<'db> Transaction<'db> {
     }
 
     pub fn query(&'db self) -> Scan<'db> {
+        let source = self.database.get_scan_source();
         let num_dims = self.database.schema.dimensions.len();
-        let mut scan = Scan::new(num_dims, self.id.unwrap_or(0));
+        let mut scan = Scan::new(source, num_dims, self.id.unwrap_or(0));
         for seg_id in self.database.get_visible_committed_segments(self.horizon) {
+            debug!("Add committed segment {:?}", seg_id);
             scan.add_segment_id(seg_id);
         }
         for rc in &self.uncommitted_segments {
+            debug!("Add uncommitted segment {:?}", rc.id);
             scan.add_segment(rc.clone());
         }
         for block in self.unsaved_blocks.values() {
+            debug!("Add unsaved block");
             scan.add_block(block);
         }
         scan

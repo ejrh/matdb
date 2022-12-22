@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use log::debug;
+use log::{debug};
 use zstd::zstd_safe;
 
 use crate::block::Block;
@@ -40,7 +40,25 @@ impl Segment {
         Ok(segment)
     }
 
-    pub(crate) fn load(&mut self, schema: &Schema) -> Result<(), Error> {
+    pub(crate) fn load(
+        database_path: &Path,
+        seg_id: SegmentId,
+        schema: &Schema
+    ) -> Result<Segment, Error> {
+        let path = get_segment_path(database_path, seg_id, true);
+
+        let mut segment = Segment {
+            id: seg_id,
+            path,
+            cached_blocks: HashMap::new()
+        };
+
+        segment.load_into(schema)?;
+
+        Ok(segment)
+    }
+
+    pub(crate) fn load_into(&mut self, schema: &Schema) -> Result<(), Error> {
         let file = File::open(&self.path)?;
         let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
 
