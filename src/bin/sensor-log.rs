@@ -132,6 +132,7 @@ fn load_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Senso
     let mut line_buffer = String::new();
     let mut last_time_str = String::new();
     let mut last_time_ms: usize = 0;
+    let mut count = 0;
     for _line_num in 1.. {
         line_buffer.clear();
         let nr = reader.read_line(&mut line_buffer)?;
@@ -165,6 +166,7 @@ fn load_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Senso
 
         //println!("{} {} {}", time_ms, sensor_id, value);
         txn.add_row(&[time_ms, sensor_id, value]);
+        count += 1;
 
         let pct = bytes_read * 10 / file_size;
         if pct > last_pct {
@@ -173,7 +175,7 @@ fn load_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Senso
             last_pct = pct;
         }
     }
-    println!("Done");
+    println!("Done ({} rows)", count);
     Ok(())
 }
 

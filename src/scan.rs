@@ -326,7 +326,7 @@ mod scan_tests {
         assert_eq!(r[0], 7);
         assert_eq!(r[1], 4);
         assert_eq!(r[2], 99);
-        assert_eq!(r.txn_id, 5);
+        assert_eq!(r.txn_id, TransactionId::MAX);
 
         let r = scan.next();
         assert!(r.is_some());
@@ -334,7 +334,7 @@ mod scan_tests {
         assert_eq!(r[0], 9);
         assert_eq!(r[1], 0);
         assert_eq!(r[2], 101);
-        assert_eq!(r.txn_id, 5);
+        assert_eq!(r.txn_id, TransactionId::MAX);
 
         assert!(&scan.next().is_none());
     }
