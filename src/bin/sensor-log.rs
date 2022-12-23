@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io;
-use std::io::{BufRead, BufReader, Read, Seek, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Instant;
 
 use chrono::prelude::*;
 use serde::{Serialize, Deserialize};
 
-use matdb::{Dimension, Value, Schema, Transaction};
+use matdb::{Dimension, Value, Schema, Transaction, Database, Error};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Sensor {
@@ -96,6 +96,22 @@ impl<'s> Sensors<'s> {
     }
 }
 
+fn open_database(database_path: &Path) -> Result<Database, Error> {
+    if database_path.exists() {
+        Database::open(database_path)
+    } else {
+        Database::create(Schema {
+            dimensions: vec![
+                Dimension { name: String::from("time"), chunk_size: 1000000 },
+                Dimension { name: String::from("sensor_id"), chunk_size: 100 },
+            ],
+            values: vec![
+                Value { name: String::from("value")}
+            ]
+        }, database_path)
+    }
+}
+
 fn parse_time(s: &str) -> usize {
     let s = s.replace("a.m.", "am").replace("p.m.", "pm");
     let parsed = Utc.datetime_from_str(s.as_str(), "%d/%m/%Y %I:%M:%S %p").unwrap();
@@ -110,11 +126,8 @@ fn parse_value(s: &str) -> usize {
     (num * 1000f64) as usize
 }
 
-fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io::Result<()> {
-    let file_size = std::fs::metadata(filename)?.len();
-    let file = File::open(filename)?;
-    let mut reader = BufReader::new(file);
-
+fn load_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Sensors, txn: &mut Transaction) -> io::Result<()> {
+    let mut bytes_read = 0;
     let mut last_pct = 0;
     let mut line_buffer = String::new();
     let mut last_time_str = String::new();
@@ -125,6 +138,8 @@ fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io
         if nr == 0 {
             break;
         }
+
+        bytes_read += nr;
 
         let line = line_buffer.trim_end_matches('\n');
 
@@ -151,7 +166,7 @@ fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io
         //println!("{} {} {}", time_ms, sensor_id, value);
         txn.add_row(&[time_ms, sensor_id, value]);
 
-        let pct = reader.stream_position()? * 10 / file_size;
+        let pct = bytes_read * 10 / file_size;
         if pct > last_pct {
             print!("{} ", pct*10);
             io::stdout().flush().unwrap();
@@ -162,46 +177,59 @@ fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io
     Ok(())
 }
 
+fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io::Result<()> {
+    let file_size = std::fs::metadata(filename)?.len() as usize;
+    let file = File::open(filename)?;
+
+    if filename.ends_with(".gz") {
+        const COMPRESSION_RATIO : usize = 16;
+        let mut gz_reader = flate2::read::GzDecoder::new(file);
+        let mut reader = BufReader::new(gz_reader);
+        load_reader(&mut reader, file_size * COMPRESSION_RATIO, sensors, txn);
+    } else {
+        let mut reader = BufReader::new(file);
+        load_reader(&mut reader, file_size, sensors, txn);
+    };
+
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     let mut sensors = Sensors::new();
     sensors.load().ok();
 
-    /* Make a database */
-    let mut matdb = matdb::Database::create(Schema {
-        dimensions: vec![
-            Dimension { name: String::from("time"), chunk_size: 1000000 },
-            Dimension { name: String::from("sensor_id"), chunk_size: 100 },
-        ],
-        values: vec![
-            Value { name: String::from("value")}
-        ]
-    }, Path::new("sensordb")).unwrap();
+    /* Open the sensor-log database */
+    let database_path = Path::new("sensor-log");
+    let mut matdb = open_database(database_path).unwrap();
 
-    /* Start a transaction */
-    let mut txn = matdb.new_transaction().unwrap();
+    /* Load all the files (skip the first arg which is the program name) */
+    for filename in args.iter().skip(1) {
+        println!("Loading {:?}", filename);
 
-    /* Load the file */
-    let now = Instant::now();
-    load_file(&args[1], &mut sensors, &mut txn).unwrap();
-    println!("Loaded and inserted in {:?}", now.elapsed());
+        /* Start a transaction */
+        let mut txn = matdb.new_transaction().unwrap();
 
-    /* Save the transaction */
-    let now = Instant::now();
-    txn.commit().unwrap();
-    println!("Saved in {:?}", now.elapsed());
+        /* Load this file */
+        let now = Instant::now();
+        load_file(filename, &mut sensors, &mut txn).unwrap();
+        println!("Loaded and inserted in {:?}", now.elapsed());
+
+        /* Save the transaction */
+        let now = Instant::now();
+        txn.commit().unwrap();
+        println!("Saved in {:?}", now.elapsed());
+    }
 
     /* Check the data is ok */
-    let txn = matdb.new_transaction().unwrap();
     let now = Instant::now();
-    //txn.load();
-    println!("Reloaded in {:?}", now.elapsed());
-
+    let txn = matdb.new_transaction().unwrap();
     let mut count = 0;
     for _row in txn.query() {
         //println!("{} {} {}", row[0], row[1], row[2]);
         count += 1;
     }
+    txn.commit();
     println!("Queried {} rows in {:?}", count, now.elapsed());
 }
