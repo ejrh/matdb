@@ -177,11 +177,11 @@ fn load_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Senso
     Ok(())
 }
 
-fn load_file(filename: &str, sensors: &mut Sensors, txn: &mut Transaction) -> io::Result<()> {
+fn load_file(filename: &Path, sensors: &mut Sensors, txn: &mut Transaction) -> io::Result<()> {
     let file_size = std::fs::metadata(filename)?.len() as usize;
     let file = File::open(filename)?;
 
-    if filename.ends_with(".gz") {
+    if filename.to_str().unwrap().ends_with(".gz") {
         const COMPRESSION_RATIO : usize = 16;
         let mut gz_reader = flate2::read::GzDecoder::new(file);
         let mut reader = BufReader::new(gz_reader);
@@ -205,21 +205,24 @@ fn main() {
     let mut matdb = open_database(database_path).unwrap();
 
     /* Load all the files (skip the first arg which is the program name) */
-    for filename in args.iter().skip(1) {
-        println!("Loading {:?}", filename);
+    for arg in args.iter().skip(1) {
+        for filename in glob::glob(arg).unwrap() {
+            let filename = filename.unwrap();
+            println!("Loading {:?}", filename);
 
-        /* Start a transaction */
-        let mut txn = matdb.new_transaction().unwrap();
+            /* Start a transaction */
+            let mut txn = matdb.new_transaction().unwrap();
 
-        /* Load this file */
-        let now = Instant::now();
-        load_file(filename, &mut sensors, &mut txn).unwrap();
-        println!("Loaded and inserted in {:?}", now.elapsed());
+            /* Load this file */
+            let now = Instant::now();
+            load_file(filename.as_path(), &mut sensors, &mut txn).unwrap();
+            println!("Loaded and inserted in {:?}", now.elapsed());
 
-        /* Save the transaction */
-        let now = Instant::now();
-        txn.commit().unwrap();
-        println!("Saved in {:?}", now.elapsed());
+            /* Save the transaction */
+            let now = Instant::now();
+            txn.commit().unwrap();
+            println!("Saved in {:?}", now.elapsed());
+        }
     }
 
     /* Check the data is ok */
