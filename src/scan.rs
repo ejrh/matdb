@@ -199,48 +199,54 @@ impl<'txn> Iterator for Scan<'txn> {
     type Item = QueryRow;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut current = self.queue.peek().map(|x| x.start_point.clone());
-        let mut need_to_deqeue = true;
+        loop {
+            let mut current = self.queue.peek().map(|x| x.start_point.clone());
+            let mut need_to_deqeue = true;
 
-        /* Find the row in the current live set with the lowest point; if the lowest is equal to the
-           next queued thing, then we need to dequeue at least one thing. */
-        for item in &self.live {
-            if current.is_none() || compare_points(self.num_dims, item.current.as_ref().unwrap(), current.as_ref().unwrap()).is_lt() {
-                need_to_deqeue = false;
-                current = item.current.clone();
-            }
-        }
-
-        let current_point = current.as_ref()?;
-
-        if need_to_deqeue {
-            self.check_queue(current_point);
-        }
-
-        /* Now check everything that's live for the best thing to return. */
-        let mut best_txn_id = 0;
-        let mut best_row: Option<Vec<Datum>> = None;
-        trace!("Current is {:?}", current_point);
-        trace!("Looking for best row in {:?} live iterators", self.live.len());
-        for item in self.live.iter_mut() {
-            let item_point = item.current.as_ref().unwrap();
-            trace!("Iterator current is {:?} from txn {:?}", item_point, item.txn_id);
-            if compare_points(self.num_dims, item_point, current_point).is_eq() {
-                if item.txn_id > best_txn_id {
-                    best_txn_id = item.txn_id;
-                    best_row = Some(item.current.as_ref().unwrap().clone());
-                    item.current = item.iter.next();
-                } else {
-                    trace!("Ignoring row {:?} from txn {:?}", item_point, item.txn_id);
-                    item.current = item.iter.next();
+            /* Find the row in the current live set with the lowest point; if the lowest is equal to the
+               next queued thing, then we need to dequeue at least one thing. */
+            for item in &self.live {
+                if current.is_none() || compare_points(self.num_dims, item.current.as_ref().unwrap(), current.as_ref().unwrap()).is_lt() {
+                    need_to_deqeue = false;
+                    current = item.current.clone();
                 }
             }
+
+            let current_point = current.as_ref()?;
+
+            if need_to_deqeue {
+                self.check_queue(current_point);
+            }
+
+            if self.live.is_empty() && !self.queue.is_empty() {
+                continue;
+            }
+
+            /* Now check everything that's live for the best thing to return. */
+            let mut best_txn_id = 0;
+            let mut best_row: Option<Vec<Datum>> = None;
+            trace!("Current is {:?}", current_point);
+            trace!("Looking for best row in {:?} live iterators", self.live.len());
+            for item in self.live.iter_mut() {
+                let item_point = item.current.as_ref().unwrap();
+                trace!("Iterator current is {:?} from txn {:?}", item_point, item.txn_id);
+                if compare_points(self.num_dims, item_point, current_point).is_eq() {
+                    if item.txn_id > best_txn_id {
+                        best_txn_id = item.txn_id;
+                        best_row = Some(item.current.as_ref().unwrap().clone());
+                        item.current = item.iter.next();
+                    } else {
+                        trace!("Ignoring row {:?} from txn {:?}", item_point, item.txn_id);
+                        item.current = item.iter.next();
+                    }
+                }
+            }
+
+            /* Clean up the live set. */
+            self.live.retain(|x| x.current.is_some());
+
+            return best_row.map(|x| QueryRow { txn_id: best_txn_id, values_array: x });
         }
-
-        /* Clean up the live set. */
-        self.live.retain(|x| x.current.is_some());
-
-        best_row.map(|x| QueryRow { txn_id: best_txn_id, values_array: x })
     }
 }
 
