@@ -167,7 +167,7 @@ impl<'txn> Scan<'txn> {
                     self.live.push(LiveItem {
                         iter,
                         current,
-                        txn_id: self.this_txn_id,
+                        txn_id: TransactionId::MAX,
                         pin_rc: None
                     });
                 }
