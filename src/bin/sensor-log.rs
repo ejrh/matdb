@@ -3,7 +3,7 @@ use std::env;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use chrono::prelude::*;
@@ -194,6 +194,25 @@ fn load_file(filename: &Path, sensors: &mut Sensors, txn: &mut Transaction) -> i
     Ok(())
 }
 
+fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
+    for filename in filenames {
+        println!("Loading {:?}", filename);
+
+        /* Start a transaction */
+        let mut txn = matdb.new_transaction().unwrap();
+
+        /* Load this file */
+        let now = Instant::now();
+        load_file(filename.as_path(), sensors, &mut txn).unwrap();
+        println!("Loaded and inserted in {:?}", now.elapsed());
+
+        /* Save the transaction */
+        let now = Instant::now();
+        txn.commit().unwrap();
+        println!("Saved in {:?}", now.elapsed());
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -204,35 +223,28 @@ fn main() {
     let database_path = Path::new("sensor-log");
     let mut matdb = open_database(database_path).unwrap();
 
-    /* Load all the files (skip the first arg which is the program name) */
-    for arg in args.iter().skip(1) {
-        for filename in glob::glob(arg).unwrap() {
-            let filename = filename.unwrap();
-            println!("Loading {:?}", filename);
+    let first_arg = &args[1];
 
-            /* Start a transaction */
-            let mut txn = matdb.new_transaction().unwrap();
-
-            /* Load this file */
-            let now = Instant::now();
-            load_file(filename.as_path(), &mut sensors, &mut txn).unwrap();
-            println!("Loaded and inserted in {:?}", now.elapsed());
-
-            /* Save the transaction */
-            let now = Instant::now();
-            txn.commit().unwrap();
-            println!("Saved in {:?}", now.elapsed());
+    if first_arg == "load" {
+        /* Load all the files (skip the first arg which is the program name) */
+        let patterns = args.iter().skip(2).collect::<Vec<_>>();
+        let mut filenames = Vec::new();
+        for arg in patterns {
+            filenames.extend(glob::glob(arg).unwrap().map(|s| s.unwrap()))
         }
+        load(&mut sensors, &mut matdb, filenames.as_slice());
+    } else if first_arg == "list" {
+        /* List the database contents */
+        let now = Instant::now();
+        let txn = matdb.new_transaction().unwrap();
+        let mut count = 0;
+        for row in txn.query() {
+            println!("{} {} {}", row[0], row[1], row[2]);
+            count += 1;
+        }
+        txn.commit();
+        println!("Queried {} rows in {:?}", count, now.elapsed());
+    } else {
+        panic!("Unknown command {}", first_arg);
     }
-
-    /* Check the data is ok */
-    let now = Instant::now();
-    let txn = matdb.new_transaction().unwrap();
-    let mut count = 0;
-    for _row in txn.query() {
-        //println!("{} {} {}", row[0], row[1], row[2]);
-        count += 1;
-    }
-    txn.commit();
-    println!("Queried {} rows in {:?}", count, now.elapsed());
 }
