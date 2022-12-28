@@ -1,7 +1,9 @@
 MatDB
 ====
 
-[![Rust build and automated tests](https://github.com/ejrh/matdb/actions/workflows/rust.yml/badge.svg)](https://github.com/ejrh/matdb/actions/workflows/rust.yml)
+[![Rust build](https://github.com/ejrh/matdb/actions/workflows/rust-build.yml/badge.svg)](https://github.com/ejrh/matdb/actions/workflows/rust-build.yml)
+[![Rust tests](https://github.com/ejrh/matdb/actions/workflows/rust-tests.yml/badge.svg)](https://github.com/ejrh/matdb/actions/workflows/rust-tests.yml)
+[![Rust Clippy](https://github.com/ejrh/matdb/actions/workflows/rust-clippy.yml/badge.svg)](https://github.com/ejrh/matdb/actions/workflows/rust-clippy.yml)
 
 MatDB is a very simple database designed for storing simple arrays of numbers, particularly fixed size integers.
 
