@@ -1,9 +1,13 @@
+use std::cmp::max;
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
 use chrono::prelude::*;
@@ -132,7 +136,7 @@ struct Item {
     value: Datum
 }
 
-fn parse_line(line: &str, sensors: &mut Sensors, last_time_str: &mut String, last_time_ms: &mut usize) -> Item {
+fn parse_line(line: &str, sensors_shared: &Arc<Mutex<&mut Sensors>>, last_time_str: &mut String, last_time_ms: &mut usize) -> Item {
     let parts = line.split('\t').collect::<Vec<&str>>();
     let time_ms: Datum = if last_time_str.as_str().eq(parts[0]) {
         *last_time_ms
@@ -147,12 +151,15 @@ fn parse_line(line: &str, sensors: &mut Sensors, last_time_str: &mut String, las
     let kind = parts[3];
     let value = parse_value(parts[4]);
 
-    let sensor_id = sensors.get(component, sensor, kind);
+    let sensor_id = {
+        let mut guard = sensors_shared.lock().unwrap();
+        (*guard).get(component, sensor, kind)
+    };
 
     Item { time_ms, sensor_id, value }
 }
 
-fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Sensors) -> io::Result<Vec<Item>> {
+fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors_shared: &Arc<Mutex<&mut Sensors>>) -> io::Result<Vec<Item>> {
     let mut bytes_read = 0;
     let mut last_pct = 0;
     let mut line_buffer = String::new();
@@ -175,23 +182,23 @@ fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Sens
 
         //println!("line [{}]", line);
 
-        let item = parse_line(line,sensors, &mut last_time_str, &mut last_time_ms);
+        let item = parse_line(line, sensors_shared, &mut last_time_str, &mut last_time_ms);
         items.push(item);
 
         //println!("{} {} {}", time_ms, sensor_id, value);
 
         let pct = bytes_read * 10 / file_size;
         if pct > last_pct {
-            print!("{} ", pct*10);
+            //print!("{} ", pct*10);
             io::stdout().flush().unwrap();
             last_pct = pct;
         }
     }
-    println!("Done ({} rows)", items.len());
+    //println!("Done ({} rows)", items.len());
     Ok(items)
 }
 
-fn parse_file(filename: &Path, sensors: &mut Sensors) -> io::Result<Vec<Item>> {
+fn parse_file(filename: &Path, sensors_shared: &Arc<Mutex<&mut Sensors>>) -> io::Result<Vec<Item>> {
     let file_size = std::fs::metadata(filename)?.len() as usize;
     let file = File::open(filename)?;
 
@@ -199,10 +206,10 @@ fn parse_file(filename: &Path, sensors: &mut Sensors) -> io::Result<Vec<Item>> {
         const COMPRESSION_RATIO : usize = 16;
         let mut gz_reader = flate2::read::GzDecoder::new(file);
         let mut reader = BufReader::new(gz_reader);
-        parse_reader(&mut reader, file_size * COMPRESSION_RATIO, sensors)
+        parse_reader(&mut reader, file_size * COMPRESSION_RATIO, sensors_shared)
     } else {
         let mut reader = BufReader::new(file);
-        parse_reader(&mut reader, file_size, sensors)
+        parse_reader(&mut reader, file_size, sensors_shared)
     }
 }
 
@@ -213,27 +220,53 @@ fn load_data(items: &Vec<Item>, txn: &mut Transaction) {
 }
 
 fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
-    for filename in filenames {
-        println!("Loading {:?}", filename);
+    let num_parser_threads = max(1, thread::available_parallelism().map(|x| x.get()).unwrap_or(1) - 1);
 
-        /* Start a transaction */
-        let mut txn = matdb.new_transaction().unwrap();
+    let (sender, receiver) = channel();
 
-        /* Parse the file */
-        let now = Instant::now();
-        let items = parse_file(filename.as_path(), sensors).unwrap();
-        println!("Parsed in {:?}", now.elapsed());
+    let mut sensors_shared = &Arc::new(Mutex::new(sensors));
 
-        /* Insert the data */
-        let now = Instant::now();
-        load_data(&items, &mut txn);
-        println!("Inserted in {:?}", now.elapsed());
+    let chunk_size = max(1, (filenames.len() - 1) / num_parser_threads + 1);
+    assert!(chunk_size * num_parser_threads >= filenames.len());
 
-        /* Save the transaction */
-        let now = Instant::now();
-        txn.commit().unwrap();
-        println!("Saved in {:?}", now.elapsed());
-    }
+    println!("Loading {} files using {} parser threads", filenames.len(), num_parser_threads);
+
+    thread::scope(|s| {
+        for (i, chunk) in filenames.chunks(chunk_size).enumerate() {
+            let sender = sender.clone();
+            let sensors_shared = sensors_shared.clone();
+
+            thread::Builder::new()
+                .name(format!("Worker {}", i))
+                .spawn_scoped(s, move || {
+                    for filename in chunk {
+                        let now = Instant::now();
+                        let items = parse_file(filename.as_path(), &sensors_shared).unwrap();
+                        let parse_ms = now.elapsed();
+                        sender.send((filename, parse_ms, items)).unwrap();
+                    }
+                });
+        }
+
+        drop(sender);
+
+        for (filename, parse_ms, items) in receiver {
+            println!("Parsed {:?} in {:?}", filename, parse_ms);
+
+            /* Start a transaction */
+            let mut txn = matdb.new_transaction().unwrap();
+
+            /* Insert the data */
+            let now = Instant::now();
+            load_data(&items, &mut txn);
+            println!("Inserted in {:?}", now.elapsed());
+
+            /* Save the transaction */
+            let now = Instant::now();
+            txn.commit().unwrap();
+            println!("Saved in {:?}", now.elapsed());
+        }
+    });
 }
 
 fn main() {
