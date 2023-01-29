@@ -9,7 +9,7 @@ use std::time::Instant;
 use chrono::prelude::*;
 use serde::{Serialize, Deserialize};
 
-use matdb::{Dimension, Value, Schema, Transaction, Database, Error};
+use matdb::{Dimension, Value, Schema, Transaction, Database, Error, Datum};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Sensor {
@@ -126,13 +126,40 @@ fn parse_value(s: &str) -> usize {
     (num * 1000f64) as usize
 }
 
-fn load_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Sensors, txn: &mut Transaction) -> io::Result<()> {
+struct Item {
+    time_ms: Datum,
+    sensor_id: Datum,
+    value: Datum
+}
+
+fn parse_line(line: &str, sensors: &mut Sensors, last_time_str: &mut String, last_time_ms: &mut usize) -> Item {
+    let parts = line.split('\t').collect::<Vec<&str>>();
+    let time_ms: Datum = if last_time_str.as_str().eq(parts[0]) {
+        *last_time_ms
+    } else {
+        last_time_str.clear();
+        last_time_str.push_str(parts[0]);
+        *last_time_ms = parse_time(parts[0]);
+        *last_time_ms
+    };
+    let component = parts[1];
+    let sensor = parts[2];
+    let kind = parts[3];
+    let value = parse_value(parts[4]);
+
+    let sensor_id = sensors.get(component, sensor, kind);
+
+    Item { time_ms, sensor_id, value }
+}
+
+fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Sensors) -> io::Result<Vec<Item>> {
     let mut bytes_read = 0;
     let mut last_pct = 0;
     let mut line_buffer = String::new();
     let mut last_time_str = String::new();
     let mut last_time_ms: usize = 0;
-    let mut count = 0;
+    let mut items = Vec::new();
+
     for _line_num in 1.. {
         line_buffer.clear();
         let nr = reader.read_line(&mut line_buffer)?;
@@ -148,25 +175,10 @@ fn load_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Senso
 
         //println!("line [{}]", line);
 
-        let parts = line.split('\t').collect::<Vec<&str>>();
-        let time_ms = if last_time_str.eq(parts[0]) {
-            last_time_ms
-        } else {
-            last_time_str.clear();
-            last_time_str.push_str(parts[0]);
-            last_time_ms = parse_time(parts[0]);
-            last_time_ms
-        };
-        let component = parts[1];
-        let sensor = parts[2];
-        let kind = parts[3];
-        let value = parse_value(parts[4]);
-
-        let sensor_id = sensors.get(component, sensor, kind);
+        let item = parse_line(line,sensors, &mut last_time_str, &mut last_time_ms);
+        items.push(item);
 
         //println!("{} {} {}", time_ms, sensor_id, value);
-        txn.add_row(&[time_ms, sensor_id, value]);
-        count += 1;
 
         let pct = bytes_read * 10 / file_size;
         if pct > last_pct {
@@ -175,11 +187,11 @@ fn load_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors: &mut Senso
             last_pct = pct;
         }
     }
-    println!("Done ({} rows)", count);
-    Ok(())
+    println!("Done ({} rows)", items.len());
+    Ok(items)
 }
 
-fn load_file(filename: &Path, sensors: &mut Sensors, txn: &mut Transaction) -> io::Result<()> {
+fn parse_file(filename: &Path, sensors: &mut Sensors) -> io::Result<Vec<Item>> {
     let file_size = std::fs::metadata(filename)?.len() as usize;
     let file = File::open(filename)?;
 
@@ -187,13 +199,17 @@ fn load_file(filename: &Path, sensors: &mut Sensors, txn: &mut Transaction) -> i
         const COMPRESSION_RATIO : usize = 16;
         let mut gz_reader = flate2::read::GzDecoder::new(file);
         let mut reader = BufReader::new(gz_reader);
-        load_reader(&mut reader, file_size * COMPRESSION_RATIO, sensors, txn);
+        parse_reader(&mut reader, file_size * COMPRESSION_RATIO, sensors)
     } else {
         let mut reader = BufReader::new(file);
-        load_reader(&mut reader, file_size, sensors, txn);
-    };
+        parse_reader(&mut reader, file_size, sensors)
+    }
+}
 
-    Ok(())
+fn load_data(items: &Vec<Item>, txn: &mut Transaction) {
+    for item in items {
+        txn.add_row(&[item.time_ms, item.sensor_id, item.value]);
+    }
 }
 
 fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
@@ -203,10 +219,15 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
         /* Start a transaction */
         let mut txn = matdb.new_transaction().unwrap();
 
-        /* Load this file */
+        /* Parse the file */
         let now = Instant::now();
-        load_file(filename.as_path(), sensors, &mut txn).unwrap();
-        println!("Loaded and inserted in {:?}", now.elapsed());
+        let items = parse_file(filename.as_path(), sensors).unwrap();
+        println!("Parsed in {:?}", now.elapsed());
+
+        /* Insert the data */
+        let now = Instant::now();
+        load_data(&items, &mut txn);
+        println!("Inserted in {:?}", now.elapsed());
 
         /* Save the transaction */
         let now = Instant::now();
@@ -234,7 +255,7 @@ fn main() {
         for arg in patterns {
             filenames.extend(glob::glob(arg).unwrap().map(|s| s.unwrap()))
         }
-        load(&mut sensors, &mut matdb, filenames.as_slice());
+        load(&mut sensors, &mut matdb, &filenames);
     } else if first_arg == "list" {
         /* List the database contents */
         let now = Instant::now();
