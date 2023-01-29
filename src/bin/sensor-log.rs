@@ -14,6 +14,7 @@ use chrono::prelude::*;
 use serde::{Serialize, Deserialize};
 
 use matdb::{Dimension, Value, Schema, Transaction, Database, Error, Datum};
+use matdb::Error::DataError;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Sensor {
@@ -116,18 +117,19 @@ fn open_database(database_path: &Path) -> Result<Database, Error> {
     }
 }
 
-fn parse_time(s: &str) -> usize {
+fn parse_time(s: &str) -> Result<usize, Error> {
     let s = s.replace("a.m.", "am").replace("p.m.", "pm");
-    let parsed = Utc.datetime_from_str(s.as_str(), "%d/%m/%Y %I:%M:%S %p").unwrap();
-    parsed.timestamp_millis() as usize
+    let parsed = Utc.datetime_from_str(s.as_str(), "%d/%m/%Y %I:%M:%S %p")
+        .map_err(|_e| DataError)?;
+    Ok(parsed.timestamp_millis() as usize)
 }
 
-fn parse_value(s: &str) -> usize {
+fn parse_value(s: &str) -> Result<usize, Error> {
     if s.is_empty() {
-        return 0;
+        return Ok(0);
     }
-    let num : f64 = s.parse::<f64>().unwrap();
-    (num * 1000f64) as usize
+    let num : f64 = s.parse::<f64>().map_err(|_e| DataError)?;
+    Ok((num * 1000f64) as usize)
 }
 
 struct Item {
@@ -136,30 +138,40 @@ struct Item {
     value: Datum
 }
 
-fn parse_line(line: &str, sensors_shared: &Arc<Mutex<&mut Sensors>>, last_time_str: &mut String, last_time_ms: &mut usize) -> Item {
+fn parse_line(
+    line: &str,
+    sensors_shared: &Arc<Mutex<&mut Sensors>>,
+    last_time_str: &mut String,
+    last_time_ms: &mut usize
+) -> Result<Item, Error> {
     let parts = line.split('\t').collect::<Vec<&str>>();
+    if parts.len() != 5 {
+        return Err(DataError)
+    }
+
     let time_ms: Datum = if last_time_str.as_str().eq(parts[0]) {
         *last_time_ms
     } else {
+        let time_ms = parse_time(parts[0])?;
         last_time_str.clear();
         last_time_str.push_str(parts[0]);
-        *last_time_ms = parse_time(parts[0]);
-        *last_time_ms
+        *last_time_ms = time_ms;
+        time_ms
     };
     let component = parts[1];
     let sensor = parts[2];
     let kind = parts[3];
-    let value = parse_value(parts[4]);
+    let value = parse_value(parts[4])?;
 
     let sensor_id = {
         let mut guard = sensors_shared.lock().unwrap();
         (*guard).get(component, sensor, kind)
     };
 
-    Item { time_ms, sensor_id, value }
+    Ok(Item { time_ms, sensor_id, value })
 }
 
-fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors_shared: &Arc<Mutex<&mut Sensors>>) -> io::Result<Vec<Item>> {
+fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors_shared: &Arc<Mutex<&mut Sensors>>) -> Result<Vec<Item>, Error> {
     let mut bytes_read = 0;
     let mut last_pct = 0;
     let mut line_buffer = String::new();
@@ -167,7 +179,7 @@ fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors_shared: &A
     let mut last_time_ms: usize = 0;
     let mut items = Vec::new();
 
-    for _line_num in 1.. {
+    for line_num in 1.. {
         line_buffer.clear();
         let nr = reader.read_line(&mut line_buffer)?;
         if nr == 0 {
@@ -182,8 +194,12 @@ fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors_shared: &A
 
         //println!("line [{}]", line);
 
-        let item = parse_line(line, sensors_shared, &mut last_time_str, &mut last_time_ms);
-        items.push(item);
+        let item_res = parse_line(line, sensors_shared, &mut last_time_str, &mut last_time_ms);
+        if let Ok(item) = item_res {
+            items.push(item);
+        } else {
+            println!("Skipping unparsable line {}: {}", line_num, line);
+        }
 
         //println!("{} {} {}", time_ms, sensor_id, value);
 
@@ -198,13 +214,13 @@ fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors_shared: &A
     Ok(items)
 }
 
-fn parse_file(filename: &Path, sensors_shared: &Arc<Mutex<&mut Sensors>>) -> io::Result<Vec<Item>> {
+fn parse_file(filename: &Path, sensors_shared: &Arc<Mutex<&mut Sensors>>) -> Result<Vec<Item>, Error> {
     let file_size = std::fs::metadata(filename)?.len() as usize;
     let file = File::open(filename)?;
 
     if filename.to_str().unwrap().ends_with(".gz") {
         const COMPRESSION_RATIO : usize = 16;
-        let mut gz_reader = flate2::read::GzDecoder::new(file);
+        let gz_reader = flate2::read::GzDecoder::new(file);
         let mut reader = BufReader::new(gz_reader);
         parse_reader(&mut reader, file_size * COMPRESSION_RATIO, sensors_shared)
     } else {
@@ -224,7 +240,7 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
 
     let (sender, receiver) = channel();
 
-    let mut sensors_shared = &Arc::new(Mutex::new(sensors));
+    let sensors_shared = &Arc::new(Mutex::new(sensors));
 
     let chunk_size = max(1, (filenames.len() - 1) / num_parser_threads + 1);
     assert!(chunk_size * num_parser_threads >= filenames.len());
@@ -245,10 +261,12 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
                         let parse_ms = now.elapsed();
                         sender.send((filename, parse_ms, items)).unwrap();
                     }
-                });
+                }).unwrap();
         }
 
         drop(sender);
+
+        let mut item_count = 0;
 
         for (filename, parse_ms, items) in receiver {
             println!("Parsed {:?} in {:?}", filename, parse_ms);
@@ -260,12 +278,15 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
             let now = Instant::now();
             load_data(&items, &mut txn);
             println!("Inserted in {:?}", now.elapsed());
+            item_count += items.len();
 
             /* Save the transaction */
             let now = Instant::now();
             txn.commit().unwrap();
             println!("Saved in {:?}", now.elapsed());
         }
+
+        println!("Inserted a total of {} items", item_count);
     });
 }
 
@@ -298,7 +319,7 @@ fn main() {
             println!("{} {} {}", row[0], row[1], row[2]);
             count += 1;
         }
-        txn.commit();
+        txn.commit().unwrap();
         println!("Queried {} rows in {:?}", count, now.elapsed());
     } else {
         panic!("Unknown command {}", first_arg);
