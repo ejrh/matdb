@@ -44,6 +44,9 @@ impl<'s> Sensors<'s> {
         self.sensor_array.push(sensor);
         let sensor = &self.sensor_array[pos];
         let key = (
+            // UNSAFE - sensor is now owned by the Sensors struct, so we can
+            // extend the lifetime of references to its String fields to the
+            // lifetime of the struct.
             unsafe { std::mem::transmute::<&'f str, &'s str>(sensor.component.as_str()) },
             unsafe { std::mem::transmute::<&'f str, &'s str>(sensor.sensor.as_str()) },
             unsafe { std::mem::transmute::<&'f str, &'s str>(sensor.kind.as_str()) }
