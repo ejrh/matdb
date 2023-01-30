@@ -109,7 +109,7 @@ impl<'db> Transaction<'db> {
     fn commit_segments(&mut self) -> Result<(), Error>{
         while !self.uncommitted_segments.is_empty() {
             let mut rc = self.uncommitted_segments.pop().unwrap();
-            let mut segment = unsafe { Rc::into_raw(rc).cast_mut().as_mut().unwrap() };
+            let mut segment = Rc::get_mut(&mut rc).unwrap();;
             segment.make_visible(&self.database.path)?;
             self.database.add_committed_segment(segment.id);
             debug!("Made segment visible {:?}", segment.path);
@@ -122,8 +122,8 @@ impl<'db> Transaction<'db> {
      */
     fn rollback_segments(&mut self) {
         let moved_segments = std::mem::take(&mut self.uncommitted_segments);
-        for rc in moved_segments {
-            let mut segment = unsafe { Rc::into_raw(rc).cast_mut().as_mut().unwrap() };
+        for mut rc in moved_segments {
+            let mut segment = Rc::get_mut(&mut rc).unwrap();;
             let path = segment.path.clone();
             segment.delete().unwrap();
             debug!("Deleted cancelled segment {:?}", path);
