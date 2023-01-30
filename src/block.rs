@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, Read, Write};
-use std::{io, ptr};
+use std::io;
 use std::mem::size_of;
 
 use crate::{Datum};
@@ -93,11 +93,8 @@ impl Block {
         if to_idx + num > self.values.len() {
             num = self.values.len() - to_idx;
         }
-        unsafe {
-            let src = self.values.as_mut_ptr().add(from_idx);
-            let dest = src.add(to_idx - from_idx);
-            ptr::copy(src, dest, num);
-        }
+        let value_slice = self.values.as_mut_slice();
+        value_slice.copy_within(from_idx..from_idx+num, to_idx);
     }
 
     fn clear_elements(&mut self, from_idx: usize, to_idx: usize) {
