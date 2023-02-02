@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use log::{debug, info, trace};
+use log::{debug, info};
 
 use crate::{BlockKey, Datum, Error, SegmentNum, TransactionId};
 use crate::block::Block;
@@ -95,7 +95,7 @@ impl<'db> Transaction<'db> {
         )?;
 
         let rc = Rc::new(new_segment);
-        self.uncommitted_segments.push(rc.clone());
+        self.uncommitted_segments.push(rc);
         //TODO tell database to cache the segment for us
         Ok(())
     }
@@ -109,7 +109,7 @@ impl<'db> Transaction<'db> {
     fn commit_segments(&mut self) -> Result<(), Error>{
         while !self.uncommitted_segments.is_empty() {
             let mut rc = self.uncommitted_segments.pop().unwrap();
-            let mut segment = Rc::get_mut(&mut rc).unwrap();;
+            let segment = Rc::get_mut(&mut rc).unwrap();
             segment.make_visible(&self.database.path)?;
             self.database.add_committed_segment(segment.id);
             debug!("Made segment visible {:?}", segment.path);
@@ -123,7 +123,7 @@ impl<'db> Transaction<'db> {
     fn rollback_segments(&mut self) {
         let moved_segments = std::mem::take(&mut self.uncommitted_segments);
         for mut rc in moved_segments {
-            let mut segment = Rc::get_mut(&mut rc).unwrap();;
+            let segment = Rc::get_mut(&mut rc).unwrap();
             let path = segment.path.clone();
             segment.delete().unwrap();
             debug!("Deleted cancelled segment {:?}", path);

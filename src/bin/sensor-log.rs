@@ -201,7 +201,7 @@ fn parse_reader<R: BufRead>(reader: &mut R, file_size: usize, sensors_shared: &A
         if let Ok(item) = item_res {
             items.push(item);
         } else {
-            println!("Skipping unparsable line {}: {}", line_num, line);
+            println!("Skipping unparsable line {line_num}: {line}");
         }
 
         //println!("{} {} {}", time_ms, sensor_id, value);
@@ -256,7 +256,7 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
             let sensors_shared = sensors_shared.clone();
 
             thread::Builder::new()
-                .name(format!("Worker {}", i))
+                .name(format!("Worker {i}"))
                 .spawn_scoped(s, move || {
                     for filename in chunk {
                         let now = Instant::now();
@@ -272,7 +272,7 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
         let mut item_count = 0;
 
         for (filename, parse_ms, items) in receiver {
-            println!("Parsed {:?} in {:?}", filename, parse_ms);
+            println!("Parsed {filename:?} in {parse_ms:?}");
 
             /* Start a transaction */
             let mut txn = matdb.new_transaction().unwrap();
@@ -289,7 +289,7 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
             println!("Saved in {:?}", now.elapsed());
         }
 
-        println!("Inserted a total of {} items", item_count);
+        println!("Inserted a total of {item_count} items");
     });
 }
 
@@ -325,6 +325,6 @@ fn main() {
         txn.commit().unwrap();
         println!("Queried {} rows in {:?}", count, now.elapsed());
     } else {
-        panic!("Unknown command {}", first_arg);
+        panic!("Unknown command {first_arg}");
     }
 }

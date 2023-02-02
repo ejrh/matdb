@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::binary_heap::BinaryHeap;
 use std::rc::Rc;
-use log::{debug, error, info, trace};
+use log::{error, info, trace};
 
 use crate::block::{Block, BlockIter};
 use crate::{BlockId, compare_points, Datum, SegmentId, TransactionId};
@@ -120,7 +120,7 @@ impl<'txn> Scan<'txn> {
         });
     }
 
-    fn check_queue(&mut self, current: &Vec<Datum>) {
+    fn check_queue(&mut self, current: &[Datum]) {
         info!("Checking for queue for stuff to become live");
         while let Some(next_queue_item) = self.queue.peek() {
             /* If we already have one and the first queued thing starts after it, do nothing. */
