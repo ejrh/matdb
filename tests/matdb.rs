@@ -53,9 +53,7 @@ fn query_data(txn: &Transaction) {
 
 #[test]
 fn main() {
-    // stderrlog::new()
-    //     .verbosity(3)
-    //     .init().unwrap();
+    env_logger::init();
 
     let mut matdb = create_database();
 

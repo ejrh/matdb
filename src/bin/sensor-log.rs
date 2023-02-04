@@ -294,6 +294,8 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
 }
 
 fn main() {
+    env_logger::init();
+
     let args: Vec<String> = env::args().collect();
 
     let mut sensors = Sensors::new();
