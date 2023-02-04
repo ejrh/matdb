@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::binary_heap::BinaryHeap;
 use std::rc::Rc;
-use log::{error, info, trace};
+use log::{debug, error, info};
 
 use crate::block::{Block, BlockIter};
 use crate::{BlockId, compare_points, Datum, SegmentId, TransactionId};
@@ -13,27 +13,26 @@ use crate::segment::Segment;
  */
 pub(crate) trait ScanSource {
     fn get_segment(&self, seg_id: SegmentId) -> Option<Rc<Segment>>;
+    fn get_block(&self, block_id: BlockId) -> Option<Rc<Block>>;
 }
 
-pub(crate) enum Type<'txn> {
+pub(crate) enum Type {
     SegmentId(SegmentId),
     Segment(Rc<Segment>),
     BlockId(BlockId),
-    Block(&'txn Block),
-    SegmentBlock(Rc<Segment>, &'static Block)
+    Block(Rc<Block>)
 }
 
-pub(crate) struct QueuedItem<'txn> {
+pub(crate) struct QueuedItem {
     start_point: Vec<Datum>,
-    item_type: Type<'txn>
+    item_type: Type
 }
 
 #[derive(Clone)]
-pub(crate) struct LiveItem<'txn> {
-    iter: BlockIter<'txn>,
+pub(crate) struct LiveItem {
+    iter: BlockIter,
     current: Option<Vec<Datum>>,
-    txn_id: TransactionId,
-    pin_rc: Option<Rc<Segment>>
+    txn_id: TransactionId
 }
 
 /**
@@ -57,8 +56,8 @@ pub struct Scan<'txn> {
     source: Box<dyn ScanSource + 'txn>,
     num_dims: usize,
     this_txn_id: TransactionId,
-    queue: BinaryHeap<QueuedItem<'txn>>,
-    live: Vec<LiveItem<'txn>>
+    queue: BinaryHeap<QueuedItem>,
+    live: Vec<LiveItem>
 }
 
 impl<'txn> Scan<'txn> {
@@ -85,7 +84,7 @@ impl<'txn> Scan<'txn> {
     }
 
     pub(crate) fn add_segment(&mut self, segment: Rc<Segment>) {
-        let start_point = segment.cached_blocks.values().flat_map(|x| x.get_start_point()).min();
+        let start_point = Some(vec![0, 0]);  //TODO should know the segment coords
         if start_point.is_none() {
             return;
         }
@@ -96,32 +95,83 @@ impl<'txn> Scan<'txn> {
         });
     }
 
-    pub(crate) fn add_block(&mut self, block: &'txn Block) {
-        let start_point = block.get_start_point();
+    pub(crate) fn add_block_id(&mut self, block_id: BlockId) {
+        let start_point = Some(vec![0, 0]);  //TODO should know the segment coords
         if start_point.is_none() {
             return;
         }
         let start_point = start_point.unwrap();
+        self.queue.push(QueuedItem {
+            start_point,
+            item_type: Type::BlockId(block_id)
+        })
+    }
+
+    pub(crate) fn add_block(&mut self, block: Rc<Block>) {
+        let start_point = block.get_start_point();
+        if start_point.is_none() {
+            info!("Not enqueuing empty block");
+            return;
+        }
+        let start_point = start_point.unwrap();
+        debug!("Enqueued block starting at {:?}", start_point);
         self.queue.push(QueuedItem {
             start_point,
             item_type: Type::Block(block)
         });
     }
 
-    pub(crate) fn add_segment_block(&mut self, rc: Rc<Segment>, block: &'static Block) {
-        let start_point = block.get_start_point();
-        if start_point.is_none() {
-            return;
+    fn pop_queue_item(&mut self) {
+        let queue_item = self.queue.pop().expect("at least one queued item");
+        match queue_item.item_type {
+            Type::SegmentId(seg_id) => {
+                let opt_rc = self.source.get_segment(seg_id);
+                if let Some(rc) = opt_rc {
+                    self.add_segment(rc);
+                } else {
+                    error!("Couldn't get segment {:?} from source", seg_id);
+                }
+            }
+            Type::Segment(rc) => {
+                //TODO add every block in the segment, not just the cached ones
+                let segment = &*rc;
+                for block_num in 0..segment.num_blocks {
+                    let block_id = (segment.id.0, segment.id.1, block_num);
+                    self.add_block_id(block_id);
+                }
+            }
+            Type::BlockId(block_id) => {
+                let opt_rc = self.source.get_block(block_id);
+                if let Some(rc) = opt_rc {
+                    self.add_block(rc);
+                } else {
+                    error!("Couldn't get block {:?} from source", block_id);
+                }
+            }
+            Type::Block(rc) => {
+                let mut iter = Block::iter(&rc);
+
+                /* Get the first row in this block; if there isn't one, skip the block entirely.
+                   Otherwise, set it as the next start point if necessary.
+                 */
+                let current = iter.next();
+                if current.is_none() {
+                    return;
+                }
+
+                debug!("Begin block starting at {:?}", current);
+                self.live.push(LiveItem {
+                    iter,
+                    current,
+                    txn_id: TransactionId::MAX
+                });
+            }
         }
-        let start_point = start_point.unwrap();
-        self.queue.push(QueuedItem {
-            start_point,
-            item_type: Type::SegmentBlock(rc, block)
-        });
+
     }
 
     fn check_queue(&mut self, current: &[Datum]) {
-        info!("Checking for queue for stuff to become live");
+        debug!("Checking for queue for stuff to become live");
         while let Some(next_queue_item) = self.queue.peek() {
             /* If we already have one and the first queued thing starts after it, do nothing. */
             if compare_points(self.num_dims,&next_queue_item.start_point, current).is_gt() {
@@ -129,68 +179,7 @@ impl<'txn> Scan<'txn> {
             }
 
             /* Otherwise pop at least one queued thing. */
-            let queue_item = self.queue.pop().unwrap();
-            match queue_item.item_type {
-                Type::SegmentId(seg_id) => {
-                    let opt_rc = self.source.get_segment(seg_id);
-                    if let Some(rc) = opt_rc {
-                        self.add_segment(rc);
-                    } else {
-                        error!("Couldn't get segment {:?} from source", seg_id);
-                    }
-                }
-                Type::Segment(rc) => {
-                    //TODO add every block in the segment, not just the cached ones
-                    let segment = &*rc;
-                    for block in segment.cached_blocks.values() {
-                        let pin_rc = rc.clone();
-                        let block = unsafe { std::mem::transmute::<&'_ Block, &'static Block>(block) };
-                        self.add_segment_block(pin_rc, block);
-                    }
-                }
-                Type::BlockId(_block_id) => {
-                    //TODO get the block from the cache and add it
-                    todo!();
-                }
-                Type::Block(block) => {
-                    let mut iter = block.iter();
-
-                    /* Get the first row in this block; if there isn't one, skip the block entirely.
-                       Otherwise, set it as the next start point if necessary.
-                     */
-                    let current = iter.next();
-                    if current.is_none() {
-                        continue;
-                    }
-
-                    trace!("Push block starting at {:?}", current);
-                    self.live.push(LiveItem {
-                        iter,
-                        current,
-                        txn_id: TransactionId::MAX,
-                        pin_rc: None
-                    });
-                }
-                Type::SegmentBlock(rc, block) => {
-                    let mut iter = block.iter();
-
-                    /* Get the first row in this block; if there isn't one, skip the block entirely.
-                       Otherwise, set it as the next start point if necessary.
-                     */
-                    let current = iter.next();
-                    if current.is_none() {
-                        continue;
-                    }
-
-                    trace!("Push segment block starting at {:?} seg id {:?}", current, rc.id);
-                    self.live.push(LiveItem {
-                        iter,
-                        current,
-                        txn_id: rc.id.0,
-                        pin_rc: Some(rc)
-                    });
-                }
-            }
+            self.pop_queue_item();
         }
     }
 }
@@ -202,6 +191,7 @@ impl<'txn> Iterator for Scan<'txn> {
         loop {
             let mut current = self.queue.peek().map(|x| x.start_point.clone());
             let mut need_to_deqeue = true;
+            debug!("Current is {:?}", current);
 
             /* Find the row in the current live set with the lowest point; if the lowest is equal to the
                next queued thing, then we need to dequeue at least one thing. */
@@ -216,6 +206,7 @@ impl<'txn> Iterator for Scan<'txn> {
 
             if need_to_deqeue {
                 self.check_queue(current_point);
+                continue;
             }
 
             if self.live.is_empty() && !self.queue.is_empty() {
@@ -225,22 +216,23 @@ impl<'txn> Iterator for Scan<'txn> {
             /* Now check everything that's live for the best thing to return. */
             let mut best_txn_id = 0;
             let mut best_row: Option<Vec<Datum>> = None;
-            trace!("Current is {:?}", current_point);
-            trace!("Looking for best row in {:?} live iterators", self.live.len());
+            debug!("Current is {:?}", current_point);
+            debug!("Looking for best row in {:?} live iterators", self.live.len());
             for item in self.live.iter_mut() {
                 let item_point = item.current.as_ref().unwrap();
-                trace!("Iterator current is {:?} from txn {:?}", item_point, item.txn_id);
+                debug!("Iterator current is {:?} from txn {:?}", item_point, item.txn_id);
                 if compare_points(self.num_dims, item_point, current_point).is_eq() {
                     if item.txn_id > best_txn_id {
                         best_txn_id = item.txn_id;
                         best_row = Some(item.current.as_ref().unwrap().clone());
                         item.current = item.iter.next();
                     } else {
-                        trace!("Ignoring row {:?} from txn {:?}", item_point, item.txn_id);
+                        debug!("Ignoring row {:?} from txn {:?}", item_point, item.txn_id);
                         item.current = item.iter.next();
                     }
                 }
             }
+            debug!("Best row found was {:?}", best_row);
 
             /* Clean up the live set. */
             self.live.retain(|x| x.current.is_some());
@@ -250,21 +242,21 @@ impl<'txn> Iterator for Scan<'txn> {
     }
 }
 
-impl<'txn> PartialEq<Self> for QueuedItem<'txn> {
+impl<'txn> PartialEq<Self> for QueuedItem {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other).is_eq()
     }
 }
 
-impl<'txn> Eq for QueuedItem<'txn> {}
+impl<'txn> Eq for QueuedItem {}
 
-impl<'txn> PartialOrd<Self> for QueuedItem<'txn> {
+impl<'txn> PartialOrd<Self> for QueuedItem {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'txn> Ord for QueuedItem<'txn> {
+impl<'txn> Ord for QueuedItem {
     fn cmp(&self, other: &Self) -> Ordering {
         compare_points(self.start_point.len(), &self.start_point, &other.start_point).reverse()
     }
@@ -289,6 +281,9 @@ mod scan_tests {
         fn get_segment(&self, seg_id: SegmentId) -> Option<Rc<Segment>> {
             todo!()
         }
+        fn get_block(&self, block_id: BlockId) -> Option<Rc<Block>> {
+            todo!()
+        }
     }
 
     #[test]
@@ -301,11 +296,11 @@ mod scan_tests {
 
     #[test]
     fn one_empty_local_block() {
-        let b = Block::new(2);
+        let b = Rc::new(Block::new(2));
 
         let source = MemSource::new();
         let mut scan = Scan::new(source, 2, 5);
-        scan.add_block(&b);
+        scan.add_block(b);
 
         assert!(&scan.next().is_none());
     }
@@ -315,10 +310,11 @@ mod scan_tests {
         let mut b = Block::new(2);
         b.add_row(&[7, 4, 99]);
         b.add_row(&[9, 0, 101]);
+        let b = Rc::new(b);
 
         let source = MemSource::new();
         let mut scan = Scan::new(source, 2, 5);
-        scan.add_block(&b);
+        scan.add_block(b);
 
         let r = scan.next();
         assert!(r.is_some());
@@ -343,13 +339,15 @@ mod scan_tests {
     fn two_local_blocks() {
         let mut b = Block::new(2);
         b.add_row(&[7, 4, 99]);
+        let b = Rc::new(b);
         let mut b2 = Block::new(2);
         b2.add_row(&[9, 0, 101]);
+        let b2 = Rc::new(b2);
 
         let source = MemSource::new();
         let mut scan = Scan::new(source, 2, 5);
-        scan.add_block(&b);
-        scan.add_block(&b2);
+        scan.add_block(b);
+        scan.add_block(b2);
 
         let r = scan.next();
         assert!(r.is_some());

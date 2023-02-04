@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::io;
 use std::mem::size_of;
+use std::rc::Rc;
 
 use crate::{Datum};
 
@@ -20,8 +21,8 @@ struct SliceInsertionParams {
 }
 
 #[derive(Clone)]
-pub struct BlockIter<'buf> {
-    block: &'buf Block,
+pub struct BlockIter {
+    block: Rc<Block>,
     indexes: Vec<usize>,
     value_index: usize
 }
@@ -133,14 +134,6 @@ impl Block {
         }
     }
 
-    pub(crate) fn iter(&self) -> BlockIter {
-        BlockIter {
-            block: self,
-            indexes: vec![0; self.dimension_values.len()],
-            value_index: 0
-        }
-    }
-
     pub(crate) fn load<R: BufRead>(&mut self, src: &mut R) -> io::Result<()> {
         let mut decoder = zstd::stream::read::Decoder::with_buffer(src)?;
 
@@ -222,12 +215,24 @@ impl Block {
     }
 
     pub(crate) fn get_start_point(&self) -> Option<Vec<Datum>> {
-        let num_dims = self.dimension_values.len();
-        self.iter().next().map(|vals| vals[0..num_dims].to_vec())
+        let mut point = Vec::with_capacity(self.dimension_values.len());
+        for dimvals in &self.dimension_values {
+            if dimvals.is_empty() { return None; }
+            point.push(dimvals[0]);
+        }
+        Some(point)
+    }
+
+    pub(crate) fn iter(this: &Rc<Self>) -> BlockIter {
+        BlockIter {
+            block: this.clone(),
+            indexes: vec![0; this.dimension_values.len()],
+            value_index: 0
+        }
     }
 }
 
-impl<'buf> BlockIter<'buf> {
+impl BlockIter {
     fn increment_indexes(&mut self) {
         self.value_index += 1;
         let mut incr_pos = self.indexes.len() - 1;
@@ -244,7 +249,7 @@ impl<'buf> BlockIter<'buf> {
     }
 }
 
-impl<'buf> Iterator for BlockIter<'buf> {
+impl Iterator for BlockIter {
     type Item = Vec<Datum>;
 
     fn next(&mut self) -> Option<Vec<Datum>>
@@ -465,28 +470,35 @@ mod iterate_tests {
 
     #[test]
     fn empty_block() {
-        let mut b = Block::new(1);
+        let mut b = Rc::new(Block::new(1));
 
-        let count = b.iter().count();
+        let count = Block::iter(&b).count();
         assert_eq!(count, 0);
 
+        let mut b = Block::new(1);
         b.add_dimension_value(0, 42);
-        let count = b.iter().count();
+        let b = Rc::new(b);
+
+        let count = Block::iter(&b).count();
         assert_eq!(count, 0);
     }
 
     #[test]
     fn one_dimension() {
         let mut b = Block::new(1);
-
         b.add_row(&[42, 99]);
+        let b = Rc::new(b);
 
-        let items : Vec<_> = b.iter().collect();
+        let items : Vec<_> = Block::iter(&b).collect();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0][0], 42);
 
+        let mut b = Block::new(1);
+        b.add_row(&[42, 99]);
         b.values[0] = None;
-        let count = b.iter().count();
+        let b = Rc::new(b);
+
+        let count = Block::iter(&b).count();
         assert_eq!(count, 0);
     }
 }

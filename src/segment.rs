@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -9,13 +8,13 @@ use zstd::zstd_safe;
 use crate::block::Block;
 use crate::storage::{get_segment_path, read_tag, skip_to_next_tag, write_tag};
 use crate::storage::Tag::{BlockTag, EndTag};
-use crate::{BlockKey, Error, SegmentId};
+use crate::{BlockNum, Error, SegmentId};
 use crate::schema::Schema;
 
 pub struct Segment {
     pub id: SegmentId,
     pub path: PathBuf,
-    pub(crate) cached_blocks: HashMap<BlockKey, Block>
+    pub num_blocks: u16
 }
 
 impl Segment {
@@ -25,17 +24,17 @@ impl Segment {
     pub(crate) fn create(
         database_path: &Path,
         seg_id: SegmentId,
-        blocks: HashMap<BlockKey, Block>
+        blocks: &Vec<&Block>
     ) -> Result<Segment, Error> {
         let path = get_segment_path(database_path, seg_id, false);
 
         let mut segment = Segment {
             id: seg_id,
             path,
-            cached_blocks: blocks
+            num_blocks: blocks.len() as u16
         };
 
-        segment.save()?;
+        segment.save(blocks)?;
 
         Ok(segment)
     }
@@ -45,12 +44,15 @@ impl Segment {
         seg_id: SegmentId,
         schema: &Schema
     ) -> Result<Segment, Error> {
-        let path = get_segment_path(database_path, seg_id, true);
+        let mut path = get_segment_path(database_path, seg_id, true);
+        if !path.exists() {
+            path = get_segment_path(database_path, seg_id, false);
+        }
 
         let mut segment = Segment {
             id: seg_id,
             path,
-            cached_blocks: HashMap::new()
+            num_blocks: 0
         };
 
         segment.load_into(schema)?;
@@ -58,35 +60,57 @@ impl Segment {
         Ok(segment)
     }
 
-    pub(crate) fn load_into(&mut self, schema: &Schema) -> Result<(), Error> {
+    pub(crate) fn load_one_block(
+        database_path: &Path,
+        seg_id: SegmentId,
+        schema: &Schema,
+        block_num: BlockNum
+    ) -> Result<Block, Error> {
+        let mut path = get_segment_path(database_path, seg_id, true);
+        if !path.exists() {
+            path = get_segment_path(database_path, seg_id, false);
+        }
+
+        let mut segment = Segment {
+            id: seg_id,
+            path,
+            num_blocks: 0
+        };
+
+        let mut blocks = segment.load_into(schema)?;
+        let block = blocks.remove(block_num as usize);
+
+        Ok(block)
+    }
+
+    fn load_into(&mut self, schema: &Schema) -> Result<Vec<Block>, Error> {
         let file = File::open(&self.path)?;
         let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
 
+        let mut blocks = Vec::new();
         loop {
             let tag = read_tag(&mut src);
 
             match tag {
-                BlockTag => self.load_block(&mut src, schema)?,
+                BlockTag => {
+                    let block = self.load_block(&mut src, schema)?;
+                    blocks.push(block);
+                },
                 EndTag => break
             }
         }
 
+        self.num_blocks = blocks.len() as u16;
+
         debug!("Read segment file {:?}", self.path);
 
-        Ok(())
+        Ok(blocks)
     }
 
-    pub(crate) fn load_block(&mut self, src: &mut BufReader<File>, schema: &Schema) -> Result<(), Error> {
+    fn load_block(&mut self, src: &mut BufReader<File>, schema: &Schema) -> Result<Block, Error> {
         let mut block = Block::new(0);
 
         block.load(src)?;
-
-        /* Pick the first row and use it as the chunk for for the whole block */
-        let first = block.iter().next();
-        if first.is_none() { return Ok(()); }
-        let key = schema.get_chunk_key(&first.unwrap());
-
-        self.cached_blocks.insert(key, block);
 
         /* ZStd leaves the last byte of a stream in the buffer, meaning we cant just read any other
            data after it.  This seems to be the "hostage byte" in the decompressor:
@@ -96,15 +120,15 @@ impl Segment {
          */
         skip_to_next_tag(src)?;
 
-        Ok(())
+        Ok(block)
     }
 
-    pub(crate) fn save(&mut self) -> Result<(), Error> {
+    fn save(&mut self, blocks: &Vec<&Block>) -> Result<(), Error> {
         let mut file = File::create(&self.path)?;
 
-        for buf in self.cached_blocks.values() {
+        for &block in blocks {
             write_tag(&mut file, BlockTag)?;
-            buf.save(&mut file)?;
+            block.save(&mut file)?;
         }
 
         write_tag(&mut file, EndTag)?;

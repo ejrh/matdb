@@ -1,4 +1,6 @@
+use std::borrow::BorrowMut;
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 use log::{debug, info};
@@ -13,7 +15,7 @@ pub struct Transaction<'db> {
     pub(crate) id: Option<TransactionId>,
     pub(crate) horizon: TransactionId,
     pub(crate) database: &'db mut Database,
-    pub(crate) unsaved_blocks: HashMap<BlockKey, Block>,
+    pub(crate) unsaved_blocks: HashMap<BlockKey, Rc<Block>>,
     pub(crate) uncommitted_segments: Vec<Rc<Segment>>
 }
 
@@ -30,7 +32,14 @@ impl<'db> Transaction<'db> {
 
     pub fn add_row(&mut self, values: &[Datum]) {
         let key = self.database.schema.get_chunk_key(values);
-        let block = self.unsaved_blocks.entry(key).or_insert_with(|| Block::new(self.database.schema.dimensions.len()));
+        let block = self.unsaved_blocks.entry(key)
+            .or_insert_with(|| Rc::new(Block::new(self.database.schema.dimensions.len())));
+        let mut block = block.as_ref();
+        let block = unsafe {
+            let const_ptr = block as *const Block;
+            let mut_ptr = const_ptr as *mut Block;
+            &mut *mut_ptr
+        };
         block.add_row(values);
     }
 
@@ -69,9 +78,10 @@ impl<'db> Transaction<'db> {
             debug!("Add uncommitted segment {:?}", rc.id);
             scan.add_segment(rc.clone());
         }
+
         for block in self.unsaved_blocks.values() {
             debug!("Add unsaved block");
-            scan.add_block(block);
+            scan.add_block(block.clone());
         }
         scan
     }
@@ -87,11 +97,21 @@ impl<'db> Transaction<'db> {
 
         /* Create a new segment and save all remaining blocks to into. */
         let moved_blocks = std::mem::take(&mut self.unsaved_blocks);
+        let blocks: Vec<&Rc<Block>> = moved_blocks.values().collect();
+        let mut block_refs = Vec::new();
+        for rc in blocks {
+            let br = unsafe {
+                let x = rc.as_ref() as *const Block;
+                let y = x as *mut Block;
+                &*y
+            };
+            block_refs.push(br);
+        }
 
         let seg_id = (txn_id, seg_num);
         let new_segment = Segment::create(
             self.database.path.as_path(),
-            seg_id, moved_blocks
+            seg_id, &block_refs
         )?;
 
         let rc = Rc::new(new_segment);

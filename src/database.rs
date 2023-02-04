@@ -1,10 +1,12 @@
+use std::cell::RefCell;
 use std::collections::{HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use log::{debug, error, info};
 
-use crate::{Error, SegmentId, TransactionId};
+use crate::{BlockId, Error, SegmentId, TransactionId};
+use crate::block::Block;
 use crate::cache::Cache;
 use crate::scan::ScanSource;
 use crate::schema::Schema;
@@ -17,7 +19,8 @@ pub struct Database {
     pub schema: Schema,
     pub next_transaction_id: TransactionId,
     pub committed_segments: HashSet<SegmentId>,
-    pub cached_segments: Cache<SegmentId, Segment>
+    pub cached_segments: RefCell<Cache<SegmentId, Segment>>,
+    pub cached_blocks: RefCell<Cache<BlockId, Block>>
 }
 
 struct ScanResult {
@@ -38,7 +41,8 @@ impl Database {
             schema,
             next_transaction_id: 1,
             committed_segments: HashSet::new(),
-            cached_segments: Cache::new(),
+            cached_segments: RefCell::new(Cache::new()),
+            cached_blocks: RefCell::new(Cache::new())
         })
     }
 
@@ -53,7 +57,8 @@ impl Database {
             schema,
             next_transaction_id: scan.next_transaction_id,
             committed_segments: scan.committed_segments,
-            cached_segments: Cache::new(),
+            cached_segments: RefCell::new(Cache::new()),
+            cached_blocks: RefCell::new(Cache::new())
         })
     }
 
@@ -124,33 +129,62 @@ struct DatabaseScanSource<'db> {
 
 impl<'db> ScanSource for DatabaseScanSource<'db> {
     fn get_segment(&self, seg_id: SegmentId) -> Option<Rc<Segment>> {
-        info!("Request for segment {:?}", (seg_id));
-        let mut_db = unsafe {
-            let const_ptr = self.database as *const Database;
-            let mut_ptr = const_ptr as *mut Database;
-            &mut *mut_ptr
-        };
+        info!("Request for segment {:?}", seg_id);
 
         /* Try get it from the cache and return it */
-        if let Some(rc) = mut_db.cached_segments.get(&seg_id) {
+        let mut borrowed = self.database.cached_segments.borrow_mut();
+        if let Some(rc) = borrowed.get(&seg_id) {
             return Some(rc);
         }
 
         /* Otherwise, load it from disk, put it into the cache, and return it */
-        let new_segment = Segment::load(
+        let segment = match Segment::load(
             self.database.path.as_path(),
-            seg_id, &self.database.schema
-        );
-        if let Err(err) = new_segment {
-            error!("Error loading segment {:?}", err);
-            return None;
+            seg_id,
+            &self.database.schema
+        ) {
+            Ok(segment) => segment,
+            Err(err) => {
+                error!("Error during fetch of segment {seg_id:?}: {err:?}");
+                return None;
+            }
+
+        };
+
+        let rc = Rc::new(segment);
+        borrowed.add(seg_id, rc.clone());
+
+        Some(rc)
+    }
+
+    fn get_block(&self, block_id: BlockId) -> Option<Rc<Block>> {
+        info!("Request for block {:?}", block_id);
+
+        /* Try get it from the cache and return it */
+        let mut borrowed = self.database.cached_blocks.borrow_mut();
+        if let Some(rc) = borrowed.get(&block_id) {
+            return Some(rc);
         }
 
-        let new_segment = new_segment.unwrap();
+        /* Otherwise, load it from disk, put it into the cache, and return it */
+        let seg_id = (block_id.0, block_id.1);
+        let block_num = block_id.2;
 
-        let rc = Rc::new(new_segment);
+        let block = match Segment::load_one_block(
+            self.database.path.as_path(),
+            seg_id,
+            &self.database.schema,
+            block_num
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                error!("Error during fetch of block {block_id:?}: {err:?}");
+                return None;
+            }
+        };
 
-        mut_db.cached_segments.add(seg_id, rc.clone());
+        let rc = Rc::new(block);
+        borrowed.add(block_id, rc.clone());
 
         Some(rc)
     }
