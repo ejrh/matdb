@@ -110,7 +110,7 @@ fn open_database(database_path: &Path) -> Result<Database, Error> {
     } else {
         Database::create(Schema {
             dimensions: vec![
-                Dimension { name: String::from("time"), chunk_size: 1000000 },
+                Dimension { name: String::from("time"), chunk_size: 24*60*60*1000 },
                 Dimension { name: String::from("sensor_id"), chunk_size: 100 },
             ],
             values: vec![
@@ -271,23 +271,23 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
 
         let mut item_count = 0;
 
+        /* Start a transaction */
+        let mut txn = matdb.new_transaction().unwrap();
+
         for (filename, parse_ms, items) in receiver {
             println!("Parsed {filename:?} in {parse_ms:?}");
-
-            /* Start a transaction */
-            let mut txn = matdb.new_transaction().unwrap();
 
             /* Insert the data */
             let now = Instant::now();
             load_data(&items, &mut txn);
             println!("Inserted in {:?}", now.elapsed());
             item_count += items.len();
-
-            /* Save the transaction */
-            let now = Instant::now();
-            txn.commit().unwrap();
-            println!("Saved in {:?}", now.elapsed());
         }
+
+        /* Save the transaction */
+        let now = Instant::now();
+        txn.commit().unwrap();
+        println!("Saved in {:?}", now.elapsed());
 
         println!("Inserted a total of {item_count} items");
     });
