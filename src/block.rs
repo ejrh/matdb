@@ -4,6 +4,7 @@ use std::io;
 use std::mem::size_of;
 use std::rc::Rc;
 
+use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use crate::{Datum};
 
 pub struct Block {
@@ -137,23 +138,17 @@ impl Block {
     pub(crate) fn load<R: BufRead>(&mut self, src: &mut R) -> io::Result<()> {
         let mut decoder = zstd::stream::read::Decoder::with_buffer(src)?;
 
-        const SZ: usize = size_of::<usize>();
-        let mut read_buffer: [u8; SZ] = [0; SZ];
-
         let mut num_values = 1;
 
         /* Read the dimensions */
-        decoder.read_exact(&mut read_buffer)?;
-        let num_dimensions = usize::from_ne_bytes(read_buffer);
+        let num_dimensions = decoder.read_u16::<BE>()?;
         self.dimension_values.clear();
         for _ in 0..num_dimensions {
-            let mut dim_vals: Vec<Datum>= Vec::new();
-            decoder.read_exact(&mut read_buffer)?;
-            let dim_size = usize::from_ne_bytes(read_buffer);
+            let mut dim_vals: Vec<Datum> = Vec::new();
+            let dim_size = decoder.read_u32::<BE>()? as usize;
             for _ in 0..dim_size {
-                decoder.read_exact(&mut read_buffer)?;
-                let dim_idx = usize::from_ne_bytes(read_buffer);
-                dim_vals.push(dim_idx);
+                let dim_idx = decoder.read_u64::<BE>()?;
+                dim_vals.push(dim_idx as Datum);
             }
             self.dimension_values.push(dim_vals);
             num_values *= dim_size;
@@ -170,8 +165,7 @@ impl Block {
             if missing == 1 {
                 self.values.push(None);
             } else {
-                decoder.read_exact(&mut read_buffer)?;
-                let val = usize::from_ne_bytes(read_buffer);
+                let val = decoder.read_u64::<BE>()? as Datum;
                 self.values.push(Some(val));
             }
         }
@@ -185,11 +179,11 @@ impl Block {
         let mut encoder = zstd::stream::write::Encoder::new(file, 1)?;
 
         /* Write the dimensions */
-        encoder.write_all(&usize::to_ne_bytes(self.dimension_values.len()))?;
+        encoder.write_u16::<BE>(self.dimension_values.len() as u16)?;
         for dim in &self.dimension_values {
-            encoder.write_all(&usize::to_ne_bytes(dim.len()))?;
+            encoder.write_u32::<BE>(dim.len() as u32)?;
             for &dim_val in dim {
-                encoder.write_all(&usize::to_ne_bytes(dim_val))?;
+                encoder.write_u64::<BE>(dim_val as u64)?;
             }
         }
 
@@ -200,7 +194,7 @@ impl Block {
         for &val in &self.values {
             if let Some(value) = val {
                 missing_bytes.push(0);
-                values_bytes.extend(usize::to_ne_bytes(value));
+                values_bytes.extend(usize::to_be_bytes(value));
             } else {
                 missing_bytes.push(1);
             }
