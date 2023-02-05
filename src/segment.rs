@@ -1,20 +1,27 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::mem::size_of;
 use std::path::{Path, PathBuf};
 
-use log::{debug};
+use byteorder::{BE, ReadBytesExt, WriteBytesExt};
+use log::debug;
 use zstd::zstd_safe;
 
 use crate::block::Block;
-use crate::storage::{get_segment_path, read_tag, skip_to_next_tag, write_tag};
-use crate::storage::Tag::{BlockTag, EndTag};
-use crate::{BlockNum, Error, SegmentId};
-use crate::schema::Schema;
+use crate::storage::{get_segment_path, read_expected_tag, skip_to_next_tag, TAG_LENGTH, write_tag};
+use crate::storage::Tag::{BlockTag, EndTag, SegmentTag};
+use crate::{BlockNum, Datum, Error, SegmentId};
+
+pub(crate) struct BlockInfo {
+    pub min_bounds: Vec<Datum>,
+    pub max_bounds: Vec<Datum>,
+    block_pos: u64
+}
 
 pub struct Segment {
     pub id: SegmentId,
     pub path: PathBuf,
-    pub num_blocks: u16
+    pub(crate) block_info: Vec<BlockInfo>
 }
 
 impl Segment {
@@ -31,7 +38,7 @@ impl Segment {
         let mut segment = Segment {
             id: seg_id,
             path,
-            num_blocks: blocks.len() as u16
+            block_info: Vec::new()
         };
 
         segment.save(blocks)?;
@@ -41,8 +48,7 @@ impl Segment {
 
     pub(crate) fn load(
         database_path: &Path,
-        seg_id: SegmentId,
-        schema: &Schema
+        seg_id: SegmentId
     ) -> Result<Segment, Error> {
         let mut path = get_segment_path(database_path, seg_id, true);
         if !path.exists() {
@@ -51,66 +57,45 @@ impl Segment {
 
         let mut segment = Segment {
             id: seg_id,
-            path,
-            num_blocks: 0
+            path: path.clone(),
+            block_info: Vec::new()
         };
 
-        segment.load_into(schema)?;
+        let file = File::open(path)?;
+        let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
+
+        /* Seek to the end and read the end tag and the offset of the segment info */
+        const END_SIZE: i64 = TAG_LENGTH as i64 + size_of::<u64>() as i64;
+        src.seek(SeekFrom::End(-END_SIZE))?;
+        read_expected_tag(&mut src, EndTag)?;
+        let segment_info_pos = src.read_u64::<BE>()?;
+
+        /* Load the segment info */
+        src.seek(SeekFrom::Start(segment_info_pos))?;
+        read_expected_tag(&mut src, SegmentTag)?;
+        segment.load_segment_info(&mut src)?;
 
         Ok(segment)
     }
 
-    pub(crate) fn load_one_block(
-        database_path: &Path,
-        seg_id: SegmentId,
-        schema: &Schema,
-        block_num: BlockNum
-    ) -> Result<Block, Error> {
-        let mut path = get_segment_path(database_path, seg_id, true);
-        if !path.exists() {
-            path = get_segment_path(database_path, seg_id, false);
-        }
+    pub(crate) fn load_one_block(&self, block_num: BlockNum) -> Result<Block, Error> {
+        let file = File::open(&self.path)?;
+        let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
 
-        let mut segment = Segment {
-            id: seg_id,
-            path,
-            num_blocks: 0
-        };
+        src.seek(SeekFrom::Start(self.block_info[block_num as usize].block_pos))?;
+        read_expected_tag(&mut src, BlockTag)?;
 
-        let mut blocks = segment.load_into(schema)?;
-        let block = blocks.remove(block_num as usize);
+        let block = self.load_block(&mut src)?;
 
         Ok(block)
     }
 
-    fn load_into(&mut self, schema: &Schema) -> Result<Vec<Block>, Error> {
-        let file = File::open(&self.path)?;
-        let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
-
-        let mut blocks = Vec::new();
-        loop {
-            let tag = read_tag(&mut src);
-
-            match tag {
-                BlockTag => {
-                    let block = self.load_block(&mut src, schema)?;
-                    blocks.push(block);
-                },
-                EndTag => break
-            }
-        }
-
-        self.num_blocks = blocks.len() as u16;
-
-        debug!("Read segment file {:?}", self.path);
-
-        Ok(blocks)
-    }
-
-    fn load_block(&mut self, src: &mut BufReader<File>, schema: &Schema) -> Result<Block, Error> {
+    fn load_block(&self, src: &mut BufReader<File>) -> Result<Block, Error> {
         let mut block = Block::new(0);
 
-        block.load(src)?;
+        let mut decoder = zstd::stream::read::Decoder::with_buffer(src)?;
+        block.load(&mut decoder)?;
+        let src = decoder.finish();
 
         /* ZStd leaves the last byte of a stream in the buffer, meaning we cant just read any other
            data after it.  This seems to be the "hostage byte" in the decompressor:
@@ -123,17 +108,87 @@ impl Segment {
         Ok(block)
     }
 
+    fn load_segment_info<R: BufRead>(&mut self, src: R) -> Result<(), Error> {
+        let mut decoder = zstd::stream::read::Decoder::with_buffer(src)?;
+
+        self.block_info.clear();
+
+        let num_blocks = decoder.read_u16::<BE>()?;
+        self.block_info.reserve_exact(num_blocks as usize);
+        let num_dims = decoder.read_u16::<BE>()?;
+        for _ in 0..num_blocks {
+            let mut min_bounds = Vec::new();
+            for _ in 0..num_dims {
+                let val = decoder.read_u64::<BE>()? as Datum;
+                min_bounds.push(val);
+            }
+            let mut max_bounds = Vec::new();
+            for _ in 0..num_dims {
+                let val = decoder.read_u64::<BE>()? as Datum;
+                max_bounds.push(val);
+            }
+            let block_pos = decoder.read_u64::<BE>()?;
+            let block_info = BlockInfo { min_bounds, max_bounds, block_pos };
+            self.block_info.push(block_info);
+        }
+
+        decoder.finish();
+        Ok(())
+    }
+
     fn save(&mut self, blocks: &Vec<&Block>) -> Result<(), Error> {
         let mut file = File::create(&self.path)?;
 
-        for &block in blocks {
+        for &block in blocks.iter() {
+            let block_pos = file.stream_position()?;
             write_tag(&mut file, BlockTag)?;
-            block.save(&mut file)?;
+            self.save_block(&mut file, &block)?;
+            let block_info = BlockInfo {
+                min_bounds: block.get_min_bounds(),
+                max_bounds: block.get_max_bounds(),
+                block_pos
+            };
+            self.block_info.push(block_info);
         }
 
+        let segment_info_pos = file.stream_position()?;
+        write_tag(&mut file, SegmentTag)?;
+        self.save_segment_info(&mut file)?;
+
         write_tag(&mut file, EndTag)?;
+        file.write_u64::<BE>(segment_info_pos)?;
 
         debug!("Wrote segment file {:?}", self.path);
+
+        Ok(())
+    }
+
+    fn save_block(&self, file: &mut File, block: &Block) -> Result<(), Error> {
+        let mut encoder = zstd::stream::write::Encoder::new(file, 1)?;
+        block.save(&mut encoder)?;
+        encoder.finish()?;
+
+        Ok(())
+    }
+
+    fn save_segment_info(&self, file: &mut File) -> Result<(), Error> {
+        let mut encoder = zstd::stream::write::Encoder::new(file, 1)?;
+
+        let num_dims = self.block_info[0].min_bounds.len() as u16;
+
+        encoder.write_u16::<BE>(self.block_info.len() as u16)?;
+        encoder.write_u16::<BE>(num_dims)?;
+        for bi in &self.block_info {
+            for dim_val in &bi.min_bounds {
+                encoder.write_u64::<BE>(*dim_val as u64)?;
+            }
+            for dim_val in &bi.max_bounds {
+                encoder.write_u64::<BE>(*dim_val as u64)?;
+            }
+            encoder.write_u64::<BE>(bi.block_pos)?;
+        }
+
+        encoder.finish()?;
 
         Ok(())
     }

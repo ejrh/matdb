@@ -4,7 +4,7 @@ use std::rc::Rc;
 use log::{debug, error, info};
 
 use crate::block::{Block, BlockIter};
-use crate::{BlockId, compare_points, Datum, SegmentId, TransactionId};
+use crate::{BlockId, BlockNum, compare_points, Datum, SegmentId, TransactionId};
 use crate::query::QueryRow;
 use crate::segment::Segment;
 
@@ -95,12 +95,7 @@ impl<'txn> Scan<'txn> {
         });
     }
 
-    pub(crate) fn add_block_id(&mut self, block_id: BlockId) {
-        let start_point = Some(vec![0, 0]);  //TODO should know the segment coords
-        if start_point.is_none() {
-            return;
-        }
-        let start_point = start_point.unwrap();
+    pub(crate) fn add_block_id(&mut self, block_id: BlockId, start_point: Vec<Datum>) {
         self.queue.push(QueuedItem {
             start_point,
             item_type: Type::BlockId(block_id)
@@ -135,9 +130,10 @@ impl<'txn> Scan<'txn> {
             Type::Segment(rc) => {
                 //TODO add every block in the segment, not just the cached ones
                 let segment = &*rc;
-                for block_num in 0..segment.num_blocks {
-                    let block_id = (segment.id.0, segment.id.1, block_num);
-                    self.add_block_id(block_id);
+                for (block_num, block_info) in segment.block_info.iter().enumerate() {
+                    let block_id = (segment.id.0, segment.id.1, block_num as BlockNum);
+                    let start_point = block_info.min_bounds.clone();
+                    self.add_block_id(block_id, start_point);
                 }
             }
             Type::BlockId(block_id) => {
@@ -159,7 +155,7 @@ impl<'txn> Scan<'txn> {
                     return;
                 }
 
-                debug!("Begin block starting at {:?}", current);
+                info!("Begin block starting at {:?}", current);
                 self.live.push(LiveItem {
                     iter,
                     current,

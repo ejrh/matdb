@@ -140,8 +140,7 @@ impl<'db> ScanSource for DatabaseScanSource<'db> {
         /* Otherwise, load it from disk, put it into the cache, and return it */
         let segment = match Segment::load(
             self.database.path.as_path(),
-            seg_id,
-            &self.database.schema
+            seg_id
         ) {
             Ok(segment) => segment,
             Err(err) => {
@@ -170,12 +169,11 @@ impl<'db> ScanSource for DatabaseScanSource<'db> {
         let seg_id = (block_id.0, block_id.1);
         let block_num = block_id.2;
 
-        let block = match Segment::load_one_block(
-            self.database.path.as_path(),
-            seg_id,
-            &self.database.schema,
-            block_num
-        ) {
+        /* Get the segment first (which will be loaded if not already cached) */
+        let segment = self.get_segment(seg_id)?;
+
+        /* Get the block from the segment */
+        let block = match segment.load_one_block(block_num) {
             Ok(block) => block,
             Err(err) => {
                 error!("Error during fetch of block {block_id:?}: {err:?}");

@@ -1,7 +1,5 @@
-use std::fs::File;
-use std::io::{BufRead, Read, Write};
+use std::io::{Read, Write};
 use std::io;
-use std::mem::size_of;
 use std::rc::Rc;
 
 use byteorder::{BE, ReadBytesExt, WriteBytesExt};
@@ -135,19 +133,17 @@ impl Block {
         }
     }
 
-    pub(crate) fn load<R: BufRead>(&mut self, src: &mut R) -> io::Result<()> {
-        let mut decoder = zstd::stream::read::Decoder::with_buffer(src)?;
-
+    pub(crate) fn load<R: Read>(&mut self, src: &mut R) -> io::Result<()> {
         let mut num_values = 1;
 
         /* Read the dimensions */
-        let num_dimensions = decoder.read_u16::<BE>()?;
+        let num_dimensions = src.read_u16::<BE>()?;
         self.dimension_values.clear();
         for _ in 0..num_dimensions {
             let mut dim_vals: Vec<Datum> = Vec::new();
-            let dim_size = decoder.read_u32::<BE>()? as usize;
+            let dim_size = src.read_u32::<BE>()? as usize;
             for _ in 0..dim_size {
-                let dim_idx = decoder.read_u64::<BE>()?;
+                let dim_idx = src.read_u64::<BE>()?;
                 dim_vals.push(dim_idx as Datum);
             }
             self.dimension_values.push(dim_vals);
@@ -159,31 +155,27 @@ impl Block {
         self.values.reserve(num_values);
 
         let mut missing_bytes: Vec<u8> = vec![1; num_values];
-        decoder.read_exact(&mut missing_bytes)?;
+        src.read_exact(&mut missing_bytes)?;
 
         for &missing in &missing_bytes {
             if missing == 1 {
                 self.values.push(None);
             } else {
-                let val = decoder.read_u64::<BE>()? as Datum;
+                let val = src.read_u64::<BE>()? as Datum;
                 self.values.push(Some(val));
             }
         }
 
-        decoder.finish();
-
         Ok(())
     }
 
-    pub(crate) fn save(&self, file: &mut File) -> io::Result<()> {
-        let mut encoder = zstd::stream::write::Encoder::new(file, 1)?;
-
+    pub(crate) fn save<W: Write>(&self, dest: &mut W) -> io::Result<()> {
         /* Write the dimensions */
-        encoder.write_u16::<BE>(self.dimension_values.len() as u16)?;
+        dest.write_u16::<BE>(self.dimension_values.len() as u16)?;
         for dim in &self.dimension_values {
-            encoder.write_u32::<BE>(dim.len() as u32)?;
+            dest.write_u32::<BE>(dim.len() as u32)?;
             for &dim_val in dim {
-                encoder.write_u64::<BE>(dim_val as u64)?;
+                dest.write_u64::<BE>(dim_val as u64)?;
             }
         }
 
@@ -200,10 +192,8 @@ impl Block {
             }
         }
 
-        encoder.write_all(missing_bytes.as_slice())?;
-        encoder.write_all(values_bytes.as_slice())?;
-
-        encoder.finish()?;
+        dest.write_all(missing_bytes.as_slice())?;
+        dest.write_all(values_bytes.as_slice())?;
 
         Ok(())
     }
@@ -215,6 +205,30 @@ impl Block {
             point.push(dimvals[0]);
         }
         Some(point)
+    }
+
+    pub(crate) fn get_min_bounds(&self) -> Vec<Datum> {
+        let mut point = Vec::with_capacity(self.dimension_values.len());
+        for dimvals in &self.dimension_values {
+            if dimvals.is_empty() {
+                point.push(0);
+            } else {
+                point.push(dimvals[0]);
+            }
+        }
+        point
+    }
+
+    pub(crate) fn get_max_bounds(&self) -> Vec<Datum> {
+        let mut point = Vec::with_capacity(self.dimension_values.len());
+        for dimvals in &self.dimension_values {
+            if dimvals.is_empty() {
+                point.push(0);
+            } else {
+                point.push(dimvals[dimvals.len() - 1]);
+            }
+        }
+        point
     }
 
     pub(crate) fn iter(this: &Rc<Self>) -> BlockIter {

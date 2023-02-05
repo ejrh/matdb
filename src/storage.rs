@@ -2,14 +2,19 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
-use crate::{SegmentId, SegmentNum, TransactionId};
+use log::error;
+
+use crate::{Error, SegmentId, SegmentNum, TransactionId};
+use crate::Error::{DataError};
 
 const TAG_PREFIX: &[u8] = "MD:".as_bytes();
 const TAG_PREFIX_LENGTH: usize = TAG_PREFIX.len();
-const TAG_LENGTH: usize = 6;
+pub const TAG_LENGTH: usize = 6;
 
+#[derive(PartialEq, Eq)]
 pub enum Tag {
     BlockTag,
+    SegmentTag,
     EndTag
 }
 
@@ -42,14 +47,15 @@ where F: Read + Seek
     Ok(())
 }
 
-pub fn read_tag<R>(reader: &mut R) -> Tag
-where R: BufRead
+pub fn read_tag<R: BufRead>(reader: &mut R) -> Tag
 {
     let mut buffer:[u8; TAG_LENGTH] = [0; TAG_LENGTH];
     reader.read_exact(&mut buffer).expect("Insuffient data for tag");
 
     if buffer.eq("MD:BLK".as_bytes()) {
         Tag::BlockTag
+    } else if buffer.eq("MD:SEG".as_bytes()) {
+        Tag::SegmentTag
     } else if buffer.eq("MD:END".as_bytes()) {
         Tag::EndTag
     } else {
@@ -61,10 +67,21 @@ pub fn write_tag(file: &mut File, tag: Tag) -> std::io::Result<()> {
     file.write_all(
         match tag {
             Tag::BlockTag => "MD:BLK".as_bytes(),
+            Tag::SegmentTag => "MD:SEG".as_bytes(),
             Tag::EndTag => "MD:END".as_bytes()
         }
     )
 }
+
+pub fn read_expected_tag<R: BufRead>(src: &mut R, expected: Tag) -> Result<(), Error> {
+    let tag = read_tag(src);
+    if tag != expected {
+        error!("Did not find end tag in segment!");
+        return Err(DataError);
+    }
+    Ok(())
+}
+
 
 pub fn get_segment_path(
     database_path: &Path,
