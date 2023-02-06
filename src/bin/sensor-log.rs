@@ -251,6 +251,8 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
     println!("Loading {} files using {} parser threads", filenames.len(), num_parser_threads);
 
     thread::scope(|s| {
+        let start_of_load = Instant::now();
+
         for (i, chunk) in filenames.chunks(chunk_size).enumerate() {
             let sender = sender.clone();
             let sensors_shared = sensors_shared.clone();
@@ -298,7 +300,7 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
         txn.commit().unwrap();
         println!("Saved in {:?}", now.elapsed());
 
-        println!("Inserted a total of {item_count} items");
+        println!("Inserted a total of {item_count} items in {:?}", start_of_load.elapsed());
     });
 }
 
