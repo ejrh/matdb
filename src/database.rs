@@ -14,6 +14,9 @@ use crate::segment::Segment;
 use crate::storage::decode_segment_path;
 use crate::transaction::Transaction;
 
+const SEGMENT_CACHE_SIZE: usize = 100;
+const BLOCK_CACHE_SIZE: usize = 100;
+
 pub struct Database {
     pub path: PathBuf,
     pub schema: Schema,
@@ -41,8 +44,8 @@ impl Database {
             schema,
             next_transaction_id: 1,
             committed_segments: HashSet::new(),
-            cached_segments: RefCell::new(Cache::new()),
-            cached_blocks: RefCell::new(Cache::new())
+            cached_segments: RefCell::new(Cache::new(SEGMENT_CACHE_SIZE)),
+            cached_blocks: RefCell::new(Cache::new(BLOCK_CACHE_SIZE))
         })
     }
 
@@ -57,8 +60,8 @@ impl Database {
             schema,
             next_transaction_id: scan.next_transaction_id,
             committed_segments: scan.committed_segments,
-            cached_segments: RefCell::new(Cache::new()),
-            cached_blocks: RefCell::new(Cache::new())
+            cached_segments: RefCell::new(Cache::new(SEGMENT_CACHE_SIZE)),
+            cached_blocks: RefCell::new(Cache::new(BLOCK_CACHE_SIZE))
         })
     }
 

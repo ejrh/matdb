@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::rc::Rc;
+use log::{debug, warn};
 
 struct Entry<V> {
     use_count: usize,
@@ -11,16 +13,19 @@ struct Entry<V> {
  * A cache that tracks which items in it have been used the most, and avoids
  * evicting those ones.
  *
- * Values are added and borrowed wrapped in Rc.
+ * Values are added and borrowed wrapped in Rc: eviction from the cache
+ * will not interfere with current users of an item.
  */
 pub struct Cache<K, V> {
-    entries: HashMap<K, Entry<V>>
+    entries: HashMap<K, Entry<V>>,
+    max_entries: usize,
+    evictables: Vec<K>
 }
 
 impl<K, V> Cache<K, V>
-where K: Hash + Eq, V: Sized {
-    pub fn new() -> Cache<K, V> {
-        Cache { entries: HashMap::new() }
+where K: Hash + Eq + Clone + Debug, V: Sized {
+    pub fn new(max_entries: usize) -> Cache<K, V> {
+        Cache { entries: HashMap::new(), max_entries, evictables: Vec::new() }
     }
 
     /**
@@ -30,6 +35,8 @@ where K: Hash + Eq, V: Sized {
      * to the cache.
      */
     pub fn add(&mut self, key: K, rc: Rc<V>) {
+        self.check_capacity();
+        debug!("Key {key:?} added");
         self.entries.insert(key, Entry { use_count: 1, rc });
     }
 
@@ -48,10 +55,51 @@ where K: Hash + Eq, V: Sized {
         let item = self.entries.get(key);
         let Some(entry) = item else { return false; };
 
-        if Rc::strong_count(&entry.rc) > 1 { return false; }
+        if Rc::strong_count(&entry.rc) > 1 {
+            debug!("Key {key:?} not evicted as it is in use");
+            return false;
+        }
 
+        debug!("Key {key:?} evicted");
         self.entries.remove(key);
         true
+    }
+
+    pub fn check_capacity(&mut self) {
+        const MAX_FIND_ATTEMPTS: usize = 10;
+        let mut find_attempts = 0;
+        while self.entries.len() >= self.max_entries {
+
+            /* If there are no evictable items, go find some. */
+            if self.evictables.is_empty() {
+
+               /* Since it's possible to fail to evict anything from the cache (if every single
+                  thing is in use somewhere else), we only try up to MAX_FIND_ATTEMPTS, after
+                  which we just clear the entire cache. */
+                if find_attempts >= MAX_FIND_ATTEMPTS {
+                    warn!("Too many attempts to find evictables, forcibly emptying cache");
+                    self.entries.clear();
+                    return;
+                } else {
+                    find_attempts += 1;
+                }
+
+                /* For each item, if its current use_count is zero, add it to the evictables queue.
+                   Otherwise decrement the use_count. */
+                for (key, entry) in self.entries.iter_mut() {
+                    if entry.use_count == 0 {
+                        self.evictables.push(key.clone());
+                    } else {
+                        entry.use_count -= 1;
+                    }
+                }
+            }
+
+            /* Try evicting evictables until the cache isn't overflowing. */
+            if let Some(key) = self.evictables.pop() {
+                self.evict(&key);
+            }
+        }
     }
 }
 
@@ -61,14 +109,14 @@ mod cache_tests {
 
     #[test]
     fn missing_key() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
 
         assert!(cache.get(&5).is_none());
     }
 
     #[test]
     fn borrow_and_return() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
         cache.add(5, Rc::new(42));
 
         let item = cache.get(&5);
@@ -82,7 +130,7 @@ mod cache_tests {
 
     #[test]
     fn borrow_and_use() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
         cache.add(5, Rc::new(42));
 
         let item = cache.get(&5);
@@ -97,7 +145,7 @@ mod cache_tests {
 
     #[test]
     fn borrow_and_then_add_more() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
         cache.add(5, Rc::new(42));
 
         let item = cache.get(&5);
@@ -114,7 +162,7 @@ mod cache_tests {
 
     #[test]
     fn borrow_two() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
         cache.add(5, Rc::new(42));
         cache.add(7, Rc::new(99));
 
@@ -133,7 +181,7 @@ mod cache_tests {
 
     #[test]
     fn borrow_same_one_twice() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
         cache.add(5, Rc::new(42));
 
         let item = cache.get(&5);
@@ -163,7 +211,7 @@ mod eviction_tests {
 
     #[test]
     fn evict_nothing_borrowed() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
         cache.add(5, Rc::new(42));
 
         assert_eq!(cache.evict(&5), true);
@@ -173,14 +221,14 @@ mod eviction_tests {
 
     #[test]
     fn evict_something_not_there() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
 
         assert_eq!(cache.evict(&5), false);
     }
 
     #[test]
     fn try_evict_something_borrowed() {
-        let mut cache: Cache<u32, u32> = Cache::new();
+        let mut cache: Cache<u32, u32> = Cache::new(100);
         cache.add(5, Rc::new(42));
 
         let item = cache.get(&5);
