@@ -270,6 +270,8 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
         drop(sender);
 
         let mut item_count = 0;
+        let mut last_item_count = 0;
+        const FLUSH_SIZE: usize = 10000000;
 
         /* Start a transaction */
         let mut txn = matdb.new_transaction().unwrap();
@@ -282,6 +284,13 @@ fn load(sensors: &mut Sensors, matdb: &mut Database, filenames: &[PathBuf]) {
             load_data(&items, &mut txn);
             println!("Inserted in {:?}", now.elapsed());
             item_count += items.len();
+
+            if item_count >= last_item_count + FLUSH_SIZE {
+                let now = Instant::now();
+                txn.flush();
+                println!("Flushed transaction in {:?}", now.elapsed());
+                last_item_count = item_count;
+            }
         }
 
         /* Save the transaction */
