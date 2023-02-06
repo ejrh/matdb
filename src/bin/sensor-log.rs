@@ -337,6 +337,16 @@ fn main() {
         }
         txn.commit().unwrap();
         println!("Queried {} rows in {:?}", count, now.elapsed());
+    } else if first_arg == "count" {
+        /* Count the number of rows in the database */
+        let now = Instant::now();
+        let txn = matdb.new_transaction().unwrap();
+        let mut count = 0;
+        for _ in txn.query() {
+            count += 1;
+        }
+        txn.commit().unwrap();
+        println!("Counted {} rows in {:?}", count, now.elapsed());
     } else {
         panic!("Unknown command {first_arg}");
     }
