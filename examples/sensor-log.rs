@@ -55,7 +55,7 @@ impl<'s> Sensors<'s> {
     }
 
     fn load(&mut self) -> io::Result<()> {
-        let mut file = File::open("sensors.json")?;
+        let mut file = File::open("../sensors.json")?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
         let json = String::from_utf8(buffer).unwrap();
@@ -75,7 +75,7 @@ impl<'s> Sensors<'s> {
     }
 
     fn save(&self) -> io::Result<()> {
-        let mut file = File::create("sensors.json")?;
+        let mut file = File::create("../sensors.json")?;
         let json: String = serde_json::to_string_pretty(&self.sensor_array)?;
         file.write_all(json.as_bytes())?;
 

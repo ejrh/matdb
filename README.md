@@ -76,6 +76,26 @@ discarded; this is the default when the `Transaction` lifetime ends.
     // Or rollback to discard changes.
     // txn.rollback().unwrap();
 
+### Sensor Log
+
+This is an example program that maintains a database of sensor information.  (In fact it is the
+motivating example for MatDB: I wanted a more efficient storage format for the sensor data I've
+been collecting for the last decade.)
+
+The database is created in a directory called `sensor-log`.  A file containing mappings between
+sensor names and database ids will be created called `sensors.json`.
+
+To run the program, use `cargo run --example sensor-log CMD` where `CMD` is one of the following:
+
+  - Import timeseries data from files, with support for gzipped files and wildcard matching.
+    `load FILENAME...`
+    
+  - List all data in the database.
+    `list`
+
+  - Count the number of items in the database.
+    `count`
+    
 Current State
 ---
 
@@ -90,8 +110,6 @@ Returns only the most recent copy of any given row matching a point.
 
 This document describes the currently *envisioned* design and implementation.  Hence,
 the current MatDB program may behave quite differently from what is expected.
-
-There is a test program called "sensor-log" that imports timeseries data from a text file.
 
 Concepts
 ---
