@@ -238,21 +238,21 @@ impl<'txn> Iterator for Scan<'txn> {
     }
 }
 
-impl<'txn> PartialEq<Self> for QueuedItem {
+impl PartialEq<Self> for QueuedItem {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other).is_eq()
     }
 }
 
-impl<'txn> Eq for QueuedItem {}
+impl Eq for QueuedItem {}
 
-impl<'txn> PartialOrd<Self> for QueuedItem {
+impl PartialOrd<Self> for QueuedItem {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'txn> Ord for QueuedItem {
+impl Ord for QueuedItem {
     fn cmp(&self, other: &Self) -> Ordering {
         compare_points(self.start_point.len(), &self.start_point, &other.start_point).reverse()
     }

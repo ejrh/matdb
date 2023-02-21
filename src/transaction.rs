@@ -32,7 +32,7 @@ impl<'db> Transaction<'db> {
         let key = self.database.schema.get_chunk_key(values);
         let block = self.unsaved_blocks.entry(key)
             .or_insert_with(|| Rc::new(Block::new(self.database.schema.dimensions.len())));
-        let mut block = block.as_ref();
+        let block = block.as_ref();
         let block = unsafe {
             let const_ptr = block as *const Block;
             let mut_ptr = const_ptr as *mut Block;

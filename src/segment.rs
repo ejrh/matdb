@@ -8,8 +8,7 @@ use log::debug;
 use zstd::zstd_safe;
 
 use crate::block::Block;
-use crate::storage::{get_segment_path, read_expected_tag, skip_to_next_tag, TAG_LENGTH, write_tag};
-use crate::storage::Tag::{BlockTag, EndTag, SegmentTag};
+use crate::storage::{get_segment_path, read_expected_tag, skip_to_next_tag, Tag, TAG_LENGTH, write_tag};
 use crate::{BlockNum, Datum, Error, SegmentId};
 
 pub(crate) struct BlockInfo {
@@ -31,7 +30,7 @@ impl Segment {
     pub(crate) fn create(
         database_path: &Path,
         seg_id: SegmentId,
-        blocks: &Vec<&Block>
+        blocks: &[&Block]
     ) -> Result<Segment, Error> {
         let path = get_segment_path(database_path, seg_id, false);
 
@@ -67,12 +66,12 @@ impl Segment {
         /* Seek to the end and read the end tag and the offset of the segment info */
         const END_SIZE: i64 = TAG_LENGTH as i64 + size_of::<u64>() as i64;
         src.seek(SeekFrom::End(-END_SIZE))?;
-        read_expected_tag(&mut src, EndTag)?;
+        read_expected_tag(&mut src, Tag::End)?;
         let segment_info_pos = src.read_u64::<BE>()?;
 
         /* Load the segment info */
         src.seek(SeekFrom::Start(segment_info_pos))?;
-        read_expected_tag(&mut src, SegmentTag)?;
+        read_expected_tag(&mut src, Tag::Segment)?;
         segment.load_segment_info(&mut src)?;
 
         Ok(segment)
@@ -83,7 +82,7 @@ impl Segment {
         let mut src = BufReader::with_capacity(zstd_safe::DCtx::in_size(), file);
 
         src.seek(SeekFrom::Start(self.block_info[block_num as usize].block_pos))?;
-        read_expected_tag(&mut src, BlockTag)?;
+        read_expected_tag(&mut src, Tag::Block)?;
 
         let block = self.load_block(&mut src)?;
 
@@ -136,13 +135,13 @@ impl Segment {
         Ok(())
     }
 
-    fn save(&mut self, blocks: &Vec<&Block>) -> Result<(), Error> {
+    fn save(&mut self, blocks: &[&Block]) -> Result<(), Error> {
         let mut file = File::create(&self.path)?;
 
         for &block in blocks.iter() {
             let block_pos = file.stream_position()?;
-            write_tag(&mut file, BlockTag)?;
-            self.save_block(&mut file, &block)?;
+            write_tag(&mut file, Tag::Block)?;
+            self.save_block(&mut file, block)?;
             let block_info = BlockInfo {
                 min_bounds: block.get_min_bounds(),
                 max_bounds: block.get_max_bounds(),
@@ -152,10 +151,10 @@ impl Segment {
         }
 
         let segment_info_pos = file.stream_position()?;
-        write_tag(&mut file, SegmentTag)?;
+        write_tag(&mut file, Tag::Segment)?;
         self.save_segment_info(&mut file)?;
 
-        write_tag(&mut file, EndTag)?;
+        write_tag(&mut file, Tag::End)?;
         file.write_u64::<BE>(segment_info_pos)?;
 
         debug!("Wrote segment file {:?}", self.path);

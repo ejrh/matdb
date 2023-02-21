@@ -13,9 +13,9 @@ pub const TAG_LENGTH: usize = 6;
 
 #[derive(PartialEq, Eq)]
 pub enum Tag {
-    BlockTag,
-    SegmentTag,
-    EndTag
+    Block,
+    Segment,
+    End
 }
 
 pub const SCHEMA_FILENAME: &str = "schema.json";
@@ -53,11 +53,11 @@ pub fn read_tag<R: BufRead>(reader: &mut R) -> Tag
     reader.read_exact(&mut buffer).expect("Insuffient data for tag");
 
     if buffer.eq("MD:BLK".as_bytes()) {
-        Tag::BlockTag
+        Tag::Block
     } else if buffer.eq("MD:SEG".as_bytes()) {
-        Tag::SegmentTag
+        Tag::Segment
     } else if buffer.eq("MD:END".as_bytes()) {
-        Tag::EndTag
+        Tag::End
     } else {
         panic!("Unknown tag")
     }
@@ -66,9 +66,9 @@ pub fn read_tag<R: BufRead>(reader: &mut R) -> Tag
 pub fn write_tag(file: &mut File, tag: Tag) -> std::io::Result<()> {
     file.write_all(
         match tag {
-            Tag::BlockTag => "MD:BLK".as_bytes(),
-            Tag::SegmentTag => "MD:SEG".as_bytes(),
-            Tag::EndTag => "MD:END".as_bytes()
+            Tag::Block => "MD:BLK".as_bytes(),
+            Tag::Segment => "MD:SEG".as_bytes(),
+            Tag::End => "MD:END".as_bytes()
         }
     )
 }
